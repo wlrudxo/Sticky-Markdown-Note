@@ -679,6 +679,7 @@ function NoteWindow({ path }: { path: string }) {
       }}
       tabIndex={-1}
     >
+      <div className="note-debug-badge">note window loaded</div>
       <div className="note-accent" data-tauri-drag-region>
         <span data-tauri-drag-region>{pathBaseName(file?.path ?? path)}</span>
       </div>

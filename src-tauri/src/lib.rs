@@ -456,7 +456,7 @@ fn open_note_window(
     let note = upsert_note(&mut config, path.clone()).clone();
     drop(config);
 
-    let mut builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App("index.html".into()))
+    let mut builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(Default::default()))
         .title(display_name_for(&path))
         .inner_size(420.0, 640.0)
         .min_inner_size(260.0, 180.0)
@@ -478,7 +478,6 @@ fn open_note_window(
     }
 
     let window = builder.build().map_err(|error| error.to_string())?;
-    open_devtools_for_window(&window);
     let _ = window.set_focus();
 
     let mut config = state.0.lock().map_err(|error| error.to_string())?;
@@ -750,13 +749,15 @@ fn restore_startup_windows(app: &AppHandle) {
     let state = app.state::<ConfigState>();
     let config = state.0.lock().map(|guard| guard.clone()).unwrap_or_default();
     let mut restored = 0;
-    for note in config
-        .notes
-        .iter()
-        .filter(|note| note.was_open_last_session || note.open_on_startup)
-    {
-        if open_note_window(app.clone(), state.clone(), note.path.clone()).is_ok() {
-            restored += 1;
+    if std::env::var("SMN_DEV_NO_RESTORE").ok().as_deref() != Some("1") {
+        for note in config
+            .notes
+            .iter()
+            .filter(|note| note.was_open_last_session || note.open_on_startup)
+        {
+            if open_note_window(app.clone(), state.clone(), note.path.clone()).is_ok() {
+                restored += 1;
+            }
         }
     }
 

@@ -53,6 +53,7 @@ if "%SMN_DRY_RUN%"=="1" (
 )
 
 echo [Sticky Markdown Note] Starting Tauri dev app...
+set SMN_DEV_NO_RESTORE=1
 npm run tauri:dev
 set EXIT_CODE=%errorlevel%
 
