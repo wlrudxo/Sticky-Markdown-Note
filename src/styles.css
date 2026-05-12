@@ -5,8 +5,8 @@
     -apple-system,
     BlinkMacSystemFont,
     sans-serif;
-  color: #27241d;
-  background: #f4f4f4;
+  color: #2d2a23;
+  background: transparent;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -31,8 +31,545 @@ select {
   font: inherit;
 }
 
-.app-shell {
+button {
+  border: 0;
+}
+
+.manager-shell {
   min-height: 100%;
-  padding: 24px;
+  padding: 16px;
+  background: #f7f7f9;
+  color: #2b2d33;
+}
+
+.manager-titlebar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 18px;
+}
+
+.brand-mark {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: linear-gradient(135deg, #f4d44f 0 55%, #f28b38 55%);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.2);
+}
+
+.manager-titlebar h1 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.manager-titlebar p {
+  margin: 1px 0 0;
+  color: #67707f;
+  font-size: 12px;
+}
+
+.manager-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr 40px;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.manager-action,
+.icon-button,
+.primary-button,
+.secondary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 38px;
+  border: 1px solid #d9dce2;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #2f3540;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.06);
+}
+
+.manager-action:hover,
+.icon-button:hover,
+.primary-button:hover,
+.secondary-button:hover {
+  background: #fdf8de;
+  border-color: #ead26b;
+}
+
+.note-section {
+  margin-top: 18px;
+}
+
+.note-section h2 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #676f7c;
+}
+
+.empty-note {
+  margin: 0;
+  color: #9aa1ac;
+  font-size: 13px;
+}
+
+.note-card-list {
+  display: grid;
+  gap: 10px;
+}
+
+.note-card {
+  display: grid;
+  gap: 10px;
+  min-height: 116px;
+  padding: 13px 14px;
+  border-top: 4px solid #f0d24a;
+  border-radius: 8px;
+  background: #fff6c7;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.12);
+  cursor: pointer;
+}
+
+.note-card:hover {
+  box-shadow: 0 4px 14px rgb(0 0 0 / 0.14);
+  transform: translateY(-1px);
+}
+
+.note-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.note-card-top strong {
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-card-top span {
+  flex: none;
+  color: #6f6a55;
+  font-size: 11px;
+}
+
+.note-card p {
+  display: -webkit-box;
+  overflow: hidden;
+  min-height: 48px;
+  margin: 0;
+  color: #2d2a23;
+  font-size: 13.5px;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+
+.note-card-flags {
+  display: flex;
+  gap: 5px;
+  min-height: 18px;
+}
+
+.note-card-flags span {
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.62);
+  color: #6a613c;
+  font-size: 10px;
+}
+
+.manager-error,
+.note-banner {
+  border: 1px solid #e3a7a0;
+  border-radius: 8px;
+  background: #fff1ee;
+  color: #8e261c;
+  font-size: 12px;
+}
+
+.manager-error {
+  margin: 10px 0;
+  padding: 8px 10px;
+}
+
+.manager-menu,
+.note-context-menu {
+  position: fixed;
+  right: 14px;
+  bottom: 14px;
+  z-index: 30;
+  display: grid;
+  min-width: 210px;
+  overflow: hidden;
+  border: 1px solid #d8d8d8;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 8px 32px rgb(0 0 0 / 0.2);
+}
+
+.manager-menu button,
+.note-context-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  background: transparent;
+  color: #252525;
+  text-align: left;
+  cursor: pointer;
+}
+
+.manager-menu button:hover,
+.note-context-menu button:hover {
+  background: #f6f1d1;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgb(24 27 31 / 0.28);
+}
+
+.settings-dialog {
+  display: grid;
+  gap: 14px;
+  width: min(520px, 100%);
+  max-height: calc(100vh - 36px);
+  overflow: auto;
+  padding: 18px;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 16px 46px rgb(0 0 0 / 0.24);
+}
+
+.settings-dialog header,
+.settings-dialog footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.settings-dialog h2 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.settings-dialog label {
+  display: grid;
+  gap: 6px;
+  color: #555e6b;
+  font-size: 12px;
+}
+
+.settings-dialog input,
+.settings-dialog select {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid #d7dce3;
+  border-radius: 7px;
+  padding: 6px 8px;
+  background: #ffffff;
+  color: #242934;
+}
+
+.checkbox-row {
+  display: flex !important;
+  grid-template-columns: none;
+  flex-direction: row;
+  align-items: center;
+}
+
+.checkbox-row input {
+  width: 16px;
+  min-height: 16px;
+}
+
+.settings-grid,
+.hotkey-settings {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.primary-button {
+  min-width: 92px;
+  background: #242934;
+  color: #ffffff;
+}
+
+.secondary-button {
+  min-width: 92px;
+}
+
+.note-shell {
+  --note-bg: #fff6c7;
+  --note-accent: #f0d24a;
+  --note-text: #29251b;
+  --note-font-size: 14.5px;
+  --note-line-height: 1.45;
+  --note-radius: 8px;
+  --note-shadow: 0.2;
+  --note-padding: 18px;
+  --note-opacity: 1;
+
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--note-accent), #9f8a16 26%);
+  border-radius: var(--note-radius);
+  background: var(--note-bg);
+  color: var(--note-text);
+  opacity: var(--note-opacity);
+  box-shadow: 0 12px 30px rgb(0 0 0 / calc(var(--note-shadow) * 0.55));
+}
+
+.note-accent {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  height: 14px;
+  padding: 0 12px;
+  background: var(--note-accent);
+  color: rgb(0 0 0 / 0);
+  font-size: 11px;
+  user-select: none;
+}
+
+.note-shell.is-focused .note-accent {
+  height: 28px;
+  color: rgb(41 37 27 / 0.68);
+}
+
+.note-toolbar {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  z-index: 10;
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.note-shell.is-focused .note-toolbar {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.note-toolbar button {
+  display: grid;
+  width: 24px;
+  height: 22px;
+  place-items: center;
+  border-radius: 5px;
+  background: rgb(255 255 255 / 0.42);
+  color: #3e3824;
+  cursor: pointer;
+}
+
+.note-toolbar button:hover {
+  background: rgb(255 255 255 / 0.82);
+}
+
+.note-banner {
+  position: absolute;
+  top: 34px;
+  right: 10px;
+  left: 10px;
+  z-index: 12;
+  padding: 7px 9px;
+}
+
+.note-status {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 14;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgb(34 37 44 / 0.72);
+  color: white;
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.note-content {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  padding: calc(var(--note-padding) + 18px) var(--note-padding) 35vh;
+  color: var(--note-text);
+  font-size: var(--note-font-size);
+  line-height: var(--note-line-height);
+  scrollbar-width: none;
+  user-select: text;
+}
+
+.note-shell.is-focused .note-content,
+.note-content:hover,
+.note-content:active {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(92 80 37 / 0.35) transparent;
+}
+
+.note-content::-webkit-scrollbar {
+  width: 0;
+}
+
+.note-shell.is-focused .note-content::-webkit-scrollbar,
+.note-content:hover::-webkit-scrollbar,
+.note-content:active::-webkit-scrollbar {
+  width: 7px;
+}
+
+.note-content::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgb(92 80 37 / 0.35);
+}
+
+.note-content p,
+.note-content ul,
+.note-content ol,
+.note-content blockquote,
+.note-content pre,
+.note-content table {
+  margin: 0 0 0.7em;
+}
+
+.note-content h1,
+.note-content h2,
+.note-content h3 {
+  margin: 0.85em 0 0.35em;
+  font-weight: 650;
+  line-height: 1.22;
+}
+
+.note-content h1 {
+  font-size: 1.18em;
+}
+
+.note-content h2 {
+  font-size: 1.1em;
+}
+
+.note-content h3 {
+  font-size: 1.02em;
+}
+
+.note-content ul,
+.note-content ol {
+  padding-left: 1.45em;
+}
+
+.note-content li {
+  margin: 0.1em 0;
+}
+
+.note-content li:has(input[type="checkbox"]:checked) {
+  color: rgb(41 37 27 / 0.52);
+}
+
+.note-content input[type="checkbox"] {
+  width: 0.95em;
+  height: 0.95em;
+  margin-right: 0.35em;
+  vertical-align: -0.12em;
+}
+
+.note-content a {
+  color: #1c5fb8;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: default;
+}
+
+.note-content code {
+  border-radius: 4px;
+  padding: 0.05em 0.28em;
+  background: rgb(255 255 255 / 0.58);
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 0.92em;
+}
+
+.note-content pre {
+  overflow: auto;
+  padding: 10px;
+  border-radius: 6px;
+  background: rgb(255 255 255 / 0.58);
+}
+
+.note-content table {
+  display: block;
+  max-width: 100%;
+  overflow: auto;
+  border-collapse: collapse;
+}
+
+.note-content th,
+.note-content td {
+  border: 1px solid rgb(92 80 37 / 0.25);
+  padding: 4px 6px;
+}
+
+.note-content blockquote {
+  border-left: 3px solid rgb(92 80 37 / 0.32);
+  padding-left: 10px;
+  color: rgb(41 37 27 / 0.75);
+}
+
+.empty-body {
+  color: rgb(41 37 27 / 0.45);
+}
+
+.resize-grip {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 18px;
+  height: 18px;
+  opacity: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(135deg, transparent 55%, rgb(65 57 33 / 0.26) 56% 62%, transparent 63%),
+    linear-gradient(135deg, transparent 70%, rgb(65 57 33 / 0.26) 71% 77%, transparent 78%);
+}
+
+.note-shell.is-focused .resize-grip {
+  opacity: 1;
+}
+
+.note-context-menu {
+  right: 10px;
+  bottom: 10px;
+}
+
+@media (max-width: 420px) {
+  .manager-shell {
+    padding: 12px;
+  }
+
+  .settings-grid,
+  .hotkey-settings {
+    grid-template-columns: 1fr;
+  }
 }
 
