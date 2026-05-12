@@ -9,6 +9,7 @@
     "opener:default",
     "fs:default",
     "shell:default",
+    "core:webview:allow-create-webview-window",
     "global-shortcut:default",
     "autostart:default"
   ]

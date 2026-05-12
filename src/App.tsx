@@ -27,6 +27,7 @@ import {
   createMarkdownFile,
   getConfig,
   getNotePathForLabel,
+  getStoredNotePath,
   isTauri,
   openNoteWindow,
   openPathExternal,
@@ -96,6 +97,7 @@ export function App() {
   const [currentWindowLabel, setCurrentWindowLabel] = useState<string | null>(() =>
     isTauri ? getCurrentWindow().label : "browser",
   );
+  const storedPath = currentWindowLabel && currentWindowLabel !== "manager" ? getStoredNotePath(currentWindowLabel) : null;
   const [labelPath, setLabelPath] = useState<string | null>(null);
   const [routeError, setRouteError] = useState("");
 
@@ -119,6 +121,10 @@ export function App() {
 
   if (injectedPath) {
     return <NoteWindow path={injectedPath} />;
+  }
+
+  if (storedPath) {
+    return <NoteWindow path={storedPath} />;
   }
 
   if (path) {

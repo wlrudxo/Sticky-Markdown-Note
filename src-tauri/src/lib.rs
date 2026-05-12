@@ -128,6 +128,20 @@ struct FileReadResult {
     read_at: i64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NoteWindowSpec {
+    label: String,
+    path: String,
+    title: String,
+    width: f64,
+    height: f64,
+    x: Option<i32>,
+    y: Option<i32>,
+    always_on_top: bool,
+    skip_taskbar: bool,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SaveNotePatch {
@@ -436,6 +450,41 @@ fn create_markdown_file(path: String) -> Result<String, String> {
     }
     fs::write(&target, "").map_err(|error| error.to_string())?;
     normalize_path(&target.to_string_lossy())
+}
+
+#[tauri::command]
+fn prepare_note_window(
+    app: AppHandle,
+    state: tauri::State<ConfigState>,
+    path: String,
+) -> Result<NoteWindowSpec, String> {
+    let path = normalize_path(&path)?;
+    let mut config = state.0.lock().map_err(|error| error.to_string())?;
+    let default_skip_taskbar = !config.note_show_in_taskbar;
+    let note = upsert_note(&mut config, path.clone());
+    note.was_open_last_session = true;
+    note.hidden = false;
+    note.last_opened_at = Some(now_ms());
+    let rect = note.window.clone().unwrap_or(WindowRect {
+        x: None,
+        y: None,
+        width: 420.0,
+        height: 640.0,
+        monitor_name: None,
+    });
+    let spec = NoteWindowSpec {
+        label: label_for_path(&path),
+        title: display_name_for(&path),
+        path,
+        width: if rect.width > 0.0 { rect.width } else { 420.0 },
+        height: if rect.height > 0.0 { rect.height } else { 640.0 },
+        x: rect.x,
+        y: rect.y,
+        always_on_top: note.always_on_top,
+        skip_taskbar: note.show_in_taskbar.map(|show| !show).unwrap_or(default_skip_taskbar),
+    };
+    save_config_to_disk(&app, &config)?;
+    Ok(spec)
 }
 
 #[tauri::command]
@@ -799,6 +848,7 @@ pub fn run() {
             save_config,
             patch_note,
             read_markdown_file,
+            prepare_note_window,
             get_note_path_for_label,
             create_markdown_file,
             open_note_window,
