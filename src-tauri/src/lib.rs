@@ -449,7 +449,7 @@ fn open_note_window(
     let note = upsert_note(&mut config, path.clone()).clone();
     drop(config);
 
-    let url = format!("index.html?view=note&path={}", urlencoding::encode(&path));
+    let url = format!("/?view=note&path={}", urlencoding::encode(&path));
     let mut builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(url.into()))
         .title(display_name_for(&path))
         .inner_size(420.0, 640.0)

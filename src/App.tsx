@@ -453,6 +453,7 @@ function NoteWindow({ path }: { path: string }) {
   const [status, setStatus] = useState("");
   const [focused, setFocused] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const statusTimer = useRef<number | null>(null);
 
@@ -468,6 +469,7 @@ function NoteWindow({ path }: { path: string }) {
         const result = await readMarkdownFile(path);
         setFile(result);
         setLastGoodContent(result.content);
+        setHasLoadedOnce(true);
         setError("");
         setConfig(await getConfig());
         if (!silent) {
@@ -658,6 +660,7 @@ function NoteWindow({ path }: { path: string }) {
       {error ? <div className="note-banner">{error}</div> : null}
       {status ? <div className="note-status">{status}</div> : null}
       <article ref={contentRef} className="note-content">
+        {!hasLoadedOnce && !error ? <p className="empty-body">Loading {pathBaseName(path)}...</p> : null}
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           components={{
@@ -671,7 +674,7 @@ function NoteWindow({ path }: { path: string }) {
         >
           {content}
         </ReactMarkdown>
-        {!content.trim() ? <p className="empty-body">Empty note</p> : null}
+        {hasLoadedOnce && !content.trim() ? <p className="empty-body">Empty note</p> : null}
       </article>
       <div className="resize-grip" aria-hidden />
       {menuOpen ? (
@@ -700,4 +703,3 @@ function NoteWindow({ path }: { path: string }) {
     </main>
   );
 }
-
