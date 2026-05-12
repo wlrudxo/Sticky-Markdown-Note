@@ -220,6 +220,13 @@ fn open_devtools_for_window(window: &tauri::WebviewWindow) {
     }
 }
 
+fn note_init_script(path: &str) -> String {
+    let encoded = serde_json::to_string(path).unwrap_or_else(|_| "null".to_string());
+    format!(
+        "window.__SMN_INITIAL_NOTE_PATH__ = {encoded}; window.__SMN_WINDOW_KIND__ = 'note';"
+    )
+}
+
 fn preview_from_content(content: &str) -> String {
     let stripped = strip_frontmatter(content);
     let mut lines = stripped
@@ -455,6 +462,7 @@ fn open_note_window(
         .min_inner_size(260.0, 180.0)
         .resizable(true)
         .devtools(true)
+        .initialization_script(note_init_script(&path))
         .decorations(false)
         .visible(true)
         .skip_taskbar(!note.show_in_taskbar.unwrap_or(false))

@@ -38,6 +38,13 @@ import {
 } from "./tauriApi";
 import type { AppConfig, FileReadResult, NoteRecord, ThemeSettings } from "./types";
 
+declare global {
+  interface Window {
+    __SMN_INITIAL_NOTE_PATH__?: string;
+    __SMN_WINDOW_KIND__?: "note" | string;
+  }
+}
+
 const fallbackTheme: ThemeSettings = {
   noteBg: "#fff6c7",
   accent: "#f0d24a",
@@ -85,6 +92,7 @@ function themeStyle(theme: ThemeSettings) {
 export function App() {
   const view = getSearchParam("view");
   const path = getSearchParam("path");
+  const injectedPath = window.__SMN_INITIAL_NOTE_PATH__;
   const [currentWindowLabel, setCurrentWindowLabel] = useState<string | null>(() =>
     isTauri ? getCurrentWindow().label : "browser",
   );
@@ -108,6 +116,10 @@ export function App() {
         .catch((cause) => setRouteError(String(cause)));
     }
   }, []);
+
+  if (injectedPath) {
+    return <NoteWindow path={injectedPath} />;
+  }
 
   if (path) {
     return <NoteWindow path={path} />;
