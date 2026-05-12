@@ -1,0 +1,23 @@
+[package]
+name = "sticky-markdown-note"
+version = "0.1.0"
+description = "Windows sticky-note style Markdown viewer"
+authors = ["Sticky Markdown Note"]
+edition = "2021"
+
+[lib]
+name = "sticky_markdown_note_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.4.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.8.5", features = ["tray-icon", "image-png"] }
+tauri-plugin-dialog = "2.4.0"
+tauri-plugin-fs = "2.4.2"
+tauri-plugin-opener = "2.5.0"
+tauri-plugin-shell = "2.3.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
