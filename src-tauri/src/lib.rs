@@ -8,7 +8,7 @@ use std::{
     sync::Mutex,
     time::{SystemTime, UNIX_EPOCH},
 };
-use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_autostart::ManagerExt as AutostartExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
@@ -226,19 +226,6 @@ fn label_for_path(path: &str) -> String {
     let mut hasher = DefaultHasher::new();
     path.hash(&mut hasher);
     format!("note-{:x}", hasher.finish())
-}
-
-fn open_devtools_for_window(window: &tauri::WebviewWindow) {
-    if cfg!(debug_assertions) || std::env::var("SMN_OPEN_DEVTOOLS").ok().as_deref() == Some("1") {
-        window.open_devtools();
-    }
-}
-
-fn note_init_script(path: &str) -> String {
-    let encoded = serde_json::to_string(path).unwrap_or_else(|_| "null".to_string());
-    format!(
-        "window.__SMN_INITIAL_NOTE_PATH__ = {encoded}; window.__SMN_WINDOW_KIND__ = 'note';"
-    )
 }
 
 fn preview_from_content(content: &str) -> String {
@@ -488,80 +475,12 @@ fn prepare_note_window(
 }
 
 #[tauri::command]
-fn open_note_window(
-    app: AppHandle,
-    state: tauri::State<ConfigState>,
-    path: String,
-) -> Result<String, String> {
-    let path = normalize_path(&path)?;
-    let label = label_for_path(&path);
-    if let Some(window) = app.get_webview_window(&label) {
-        let _ = window.show();
-        let _ = window.set_focus();
-        return Ok(label);
-    }
-
-    let mut config = state.0.lock().map_err(|error| error.to_string())?;
-    let note = upsert_note(&mut config, path.clone()).clone();
-    drop(config);
-
-    let mut builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(Default::default()))
-        .title(display_name_for(&path))
-        .inner_size(420.0, 640.0)
-        .min_inner_size(260.0, 180.0)
-        .resizable(true)
-        .devtools(true)
-        .initialization_script(note_init_script(&path))
-        .decorations(false)
-        .visible(true)
-        .skip_taskbar(!note.show_in_taskbar.unwrap_or(false))
-        .always_on_top(note.always_on_top);
-
-    if let Some(rect) = &note.window {
-        if rect.width > 0.0 && rect.height > 0.0 {
-            builder = builder.inner_size(rect.width, rect.height);
-        }
-        if let (Some(x), Some(y)) = (rect.x, rect.y) {
-            builder = builder.position(x as f64, y as f64);
-        }
-    }
-
-    let window = builder.build().map_err(|error| error.to_string())?;
-    let _ = window.set_focus();
-
-    let mut config = state.0.lock().map_err(|error| error.to_string())?;
-    let note = upsert_note(&mut config, path);
-    note.was_open_last_session = true;
-    note.hidden = false;
-    note.last_opened_at = Some(now_ms());
-    save_config_to_disk(&app, &config)?;
-    Ok(label)
-}
-
-#[tauri::command]
-fn get_note_path_for_label(
-    state: tauri::State<ConfigState>,
-    label: String,
-) -> Result<Option<String>, String> {
-    let config = state.0.lock().map_err(|error| error.to_string())?;
-    Ok(config
-        .notes
-        .iter()
-        .find(|note| label_for_path(&note.path) == label)
-        .map(|note| note.path.clone()))
-}
-
-#[tauri::command]
-fn close_note_window(
+fn mark_note_closed(
     app: AppHandle,
     state: tauri::State<ConfigState>,
     path: String,
 ) -> Result<(), String> {
     let path = normalize_path(&path)?;
-    let label = label_for_path(&path);
-    if let Some(window) = app.get_webview_window(&label) {
-        let _ = window.close();
-    }
     let mut config = state.0.lock().map_err(|error| error.to_string())?;
     let note = upsert_note(&mut config, path);
     note.was_open_last_session = false;
@@ -589,19 +508,18 @@ fn show_note_windows(app: AppHandle, state: tauri::State<ConfigState>) -> Result
         let config = state.0.lock().map_err(|error| error.to_string())?;
         config.notes.clone()
     };
-    let mut opened_any = false;
-    for note in notes
+    let paths = notes
         .iter()
         .filter(|note| note.was_open_last_session || note.open_on_startup)
-    {
-        opened_any = true;
-        let _ = open_note_window(app.clone(), state.clone(), note.path.clone());
-    }
+        .map(|note| note.path.clone())
+        .collect::<Vec<_>>();
 
-    if !opened_any {
-        if let Some(manager) = app.get_webview_window("manager") {
+    if let Some(manager) = app.get_webview_window("manager") {
+        if paths.is_empty() {
             let _ = manager.show();
             let _ = manager.set_focus();
+        } else {
+            let _ = manager.emit("open-note-paths", paths.clone());
         }
     }
 
@@ -612,6 +530,17 @@ fn show_note_windows(app: AppHandle, state: tauri::State<ConfigState>) -> Result
         }
     }
     save_config_to_disk(&app, &config)
+}
+
+#[tauri::command]
+fn get_restore_note_paths(state: tauri::State<ConfigState>) -> Result<Vec<String>, String> {
+    let config = state.0.lock().map_err(|error| error.to_string())?;
+    Ok(config
+        .notes
+        .iter()
+        .filter(|note| note.was_open_last_session || note.open_on_startup)
+        .map(|note| note.path.clone())
+        .collect())
 }
 
 fn apply_hotkey_behavior(app: &AppHandle) {
@@ -797,22 +726,15 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 fn restore_startup_windows(app: &AppHandle) {
     let state = app.state::<ConfigState>();
     let config = state.0.lock().map(|guard| guard.clone()).unwrap_or_default();
-    let mut restored = 0;
-    if std::env::var("SMN_DEV_NO_RESTORE").ok().as_deref() != Some("1") {
-        for note in config
-            .notes
-            .iter()
-            .filter(|note| note.was_open_last_session || note.open_on_startup)
-        {
-            if open_note_window(app.clone(), state.clone(), note.path.clone()).is_ok() {
-                restored += 1;
-            }
-        }
-    }
+    let restore_paths = config
+        .notes
+        .iter()
+        .filter(|note| note.was_open_last_session || note.open_on_startup)
+        .map(|note| note.path.clone())
+        .collect::<Vec<_>>();
 
     if let Some(manager) = app.get_webview_window("manager") {
-        open_devtools_for_window(&manager);
-        if config.manager_visible_on_last_quit || restored == 0 {
+        if config.manager_visible_on_last_quit || restore_paths.is_empty() {
             let _ = manager.show();
         } else {
             let _ = manager.hide();
@@ -849,10 +771,9 @@ pub fn run() {
             patch_note,
             read_markdown_file,
             prepare_note_window,
-            get_note_path_for_label,
             create_markdown_file,
-            open_note_window,
-            close_note_window,
+            get_restore_note_paths,
+            mark_note_closed,
             hide_note_windows,
             show_note_windows,
             set_note_always_on_top,

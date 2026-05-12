@@ -9,7 +9,6 @@ import {
   EyeOff,
   FilePlus2,
   FolderOpen,
-  MoreHorizontal,
   Pin,
   PinOff,
   RefreshCw,
@@ -23,12 +22,12 @@ import remarkGfm from "remark-gfm";
 import {
   chooseMarkdownFile,
   chooseNewMarkdownPath,
-  closeNoteWindow,
   createMarkdownFile,
   getConfig,
-  getNotePathForLabel,
+  getRestoreNotePaths,
   getStoredNotePath,
   isTauri,
+  markNoteClosed,
   openNoteWindow,
   openPathExternal,
   patchNote,
@@ -38,13 +37,6 @@ import {
   setNoteAlwaysOnTop,
 } from "./tauriApi";
 import type { AppConfig, FileReadResult, NoteRecord, ThemeSettings } from "./types";
-
-declare global {
-  interface Window {
-    __SMN_INITIAL_NOTE_PATH__?: string;
-    __SMN_WINDOW_KIND__?: "note" | string;
-  }
-}
 
 const fallbackTheme: ThemeSettings = {
   noteBg: "#fff6c7",
@@ -91,37 +83,16 @@ function themeStyle(theme: ThemeSettings) {
 }
 
 export function App() {
-  const view = getSearchParam("view");
   const path = getSearchParam("path");
-  const injectedPath = window.__SMN_INITIAL_NOTE_PATH__;
   const [currentWindowLabel, setCurrentWindowLabel] = useState<string | null>(() =>
     isTauri ? getCurrentWindow().label : "browser",
   );
   const storedPath = currentWindowLabel && currentWindowLabel !== "manager" ? getStoredNotePath(currentWindowLabel) : null;
-  const [labelPath, setLabelPath] = useState<string | null>(null);
-  const [routeError, setRouteError] = useState("");
 
   useEffect(() => {
     if (!isTauri) return;
-    const label = getCurrentWindow().label;
-    setCurrentWindowLabel(label);
-    if (label !== "manager") {
-      void getNotePathForLabel(label)
-        .then((nextPath) => {
-          if (nextPath) {
-            setLabelPath(nextPath);
-            setRouteError("");
-          } else {
-            setRouteError(`No note path is registered for window ${label}.`);
-          }
-        })
-        .catch((cause) => setRouteError(String(cause)));
-    }
+    setCurrentWindowLabel(getCurrentWindow().label);
   }, []);
-
-  if (injectedPath) {
-    return <NoteWindow path={injectedPath} />;
-  }
 
   if (storedPath) {
     return <NoteWindow path={storedPath} />;
@@ -132,21 +103,18 @@ export function App() {
   }
 
   if (currentWindowLabel && currentWindowLabel !== "manager") {
-    if (labelPath) {
-      return <NoteWindow path={labelPath} />;
-    }
-    return <BootScreen label={currentWindowLabel} error={routeError} />;
+    return <BootScreen label={currentWindowLabel} />;
   }
 
   return <ManagerWindow />;
 }
 
-function BootScreen({ label, error }: { label: string; error: string }) {
+function BootScreen({ label }: { label: string }) {
   return (
     <main className="boot-screen">
       <strong>Sticky Markdown Note</strong>
       <span>Opening note window: {label}</span>
-      {error ? <em>{error}</em> : <span>Resolving note path...</span>}
+      <span>Waiting for note path...</span>
     </main>
   );
 }
@@ -173,6 +141,12 @@ function ManagerWindow() {
     void listen("tray-new-note", () => void handleNewNote()).then((dispose) => unlisteners.push(dispose));
     void listen("tray-load-note", () => void handleLoadNote()).then((dispose) => unlisteners.push(dispose));
     void listen("tray-open-manager", () => void reload()).then((dispose) => unlisteners.push(dispose));
+    void listen<string[]>("open-note-paths", (event) => {
+      event.payload.forEach((notePath) => void handleOpen(notePath));
+    }).then((dispose) => unlisteners.push(dispose));
+    void getRestoreNotePaths()
+      .then((paths) => paths.forEach((notePath) => void handleOpen(notePath)))
+      .catch((cause) => setError(String(cause)));
     return () => unlisteners.forEach((dispose) => dispose());
   }, [reload]);
 
@@ -685,7 +659,6 @@ function NoteWindow({ path }: { path: string }) {
       }}
       tabIndex={-1}
     >
-      <div className="note-debug-badge">note window loaded</div>
       <div className="note-accent" data-tauri-drag-region>
         <span data-tauri-drag-region>{pathBaseName(file?.path ?? path)}</span>
       </div>
@@ -713,7 +686,7 @@ function NoteWindow({ path }: { path: string }) {
         >
           <ArrowDownToLine size={15} />
         </button>
-        <button title="Close note" onClick={() => void closeNoteWindow(file?.path ?? path)}>
+        <button title="Close note" onClick={() => void closeCurrentNote(file?.path ?? path)}>
           <X size={15} />
         </button>
       </div>
@@ -753,7 +726,7 @@ function NoteWindow({ path }: { path: string }) {
             <Copy size={14} />
             Copy
           </button>
-          <button onClick={() => void closeNoteWindow(file?.path ?? path)}>Close note</button>
+          <button onClick={() => void closeCurrentNote(file?.path ?? path)}>Close note</button>
           <button onClick={() => setMenuOpen(false)}>
             <Check size={14} />
             Close menu
@@ -762,4 +735,11 @@ function NoteWindow({ path }: { path: string }) {
       ) : null}
     </main>
   );
+}
+
+async function closeCurrentNote(path: string) {
+  await markNoteClosed(path);
+  if (isTauri) {
+    await getCurrentWindow().close();
+  }
 }

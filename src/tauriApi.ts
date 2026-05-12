@@ -39,12 +39,12 @@ export function getStoredNotePath(label: string): string | null {
   return window.localStorage.getItem(`${notePathStoragePrefix}${label}`);
 }
 
-export function getNotePathForLabel(label: string): Promise<string | null> {
-  return invoke("get_note_path_for_label", { label });
-}
-
 export function createMarkdownFile(path: string): Promise<string> {
   return invoke("create_markdown_file", { path });
+}
+
+export function getRestoreNotePaths(): Promise<string[]> {
+  return invoke("get_restore_note_paths");
 }
 
 export async function openNoteWindow(path: string): Promise<string> {
@@ -84,8 +84,8 @@ export async function openNoteWindow(path: string): Promise<string> {
   return spec.label;
 }
 
-export function closeNoteWindow(path: string): Promise<void> {
-  return invoke("close_note_window", { path });
+export function markNoteClosed(path: string): Promise<void> {
+  return invoke("mark_note_closed", { path });
 }
 
 export function setNoteAlwaysOnTop(path: string, alwaysOnTop: boolean): Promise<AppConfig> {
