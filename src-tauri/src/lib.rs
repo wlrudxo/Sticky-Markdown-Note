@@ -214,6 +214,12 @@ fn label_for_path(path: &str) -> String {
     format!("note-{:x}", hasher.finish())
 }
 
+fn open_devtools_for_window(window: &tauri::WebviewWindow) {
+    if cfg!(debug_assertions) || std::env::var("SMN_OPEN_DEVTOOLS").ok().as_deref() == Some("1") {
+        window.open_devtools();
+    }
+}
+
 fn preview_from_content(content: &str) -> String {
     let stripped = strip_frontmatter(content);
     let mut lines = stripped
@@ -449,6 +455,7 @@ fn open_note_window(
         .inner_size(420.0, 640.0)
         .min_inner_size(260.0, 180.0)
         .resizable(true)
+        .devtools(true)
         .decorations(false)
         .visible(true)
         .skip_taskbar(!note.show_in_taskbar.unwrap_or(false))
@@ -464,6 +471,7 @@ fn open_note_window(
     }
 
     let window = builder.build().map_err(|error| error.to_string())?;
+    open_devtools_for_window(&window);
     let _ = window.set_focus();
 
     let mut config = state.0.lock().map_err(|error| error.to_string())?;
@@ -733,6 +741,7 @@ fn restore_startup_windows(app: &AppHandle) {
     }
 
     if let Some(manager) = app.get_webview_window("manager") {
+        open_devtools_for_window(&manager);
         if config.manager_visible_on_last_quit || restored == 0 {
             let _ = manager.show();
         } else {
