@@ -20,6 +20,10 @@ export function readMarkdownFile(path: string): Promise<FileReadResult> {
   return invoke("read_markdown_file", { path });
 }
 
+export function getNotePathForLabel(label: string): Promise<string | null> {
+  return invoke("get_note_path_for_label", { label });
+}
+
 export function createMarkdownFile(path: string): Promise<string> {
   return invoke("create_markdown_file", { path });
 }
@@ -70,4 +74,3 @@ export async function chooseNewMarkdownPath(defaultPath?: string): Promise<strin
   });
   return selected ?? null;
 }
-

@@ -26,6 +26,7 @@ import {
   closeNoteWindow,
   createMarkdownFile,
   getConfig,
+  getNotePathForLabel,
   isTauri,
   openNoteWindow,
   openPathExternal,
@@ -84,12 +85,52 @@ function themeStyle(theme: ThemeSettings) {
 export function App() {
   const view = getSearchParam("view");
   const path = getSearchParam("path");
+  const [currentWindowLabel, setCurrentWindowLabel] = useState<string | null>(() =>
+    isTauri ? getCurrentWindow().label : "browser",
+  );
+  const [labelPath, setLabelPath] = useState<string | null>(null);
+  const [routeError, setRouteError] = useState("");
 
-  if (view === "note" && path) {
+  useEffect(() => {
+    if (!isTauri) return;
+    const label = getCurrentWindow().label;
+    setCurrentWindowLabel(label);
+    if (label !== "manager") {
+      void getNotePathForLabel(label)
+        .then((nextPath) => {
+          if (nextPath) {
+            setLabelPath(nextPath);
+            setRouteError("");
+          } else {
+            setRouteError(`No note path is registered for window ${label}.`);
+          }
+        })
+        .catch((cause) => setRouteError(String(cause)));
+    }
+  }, []);
+
+  if (path) {
     return <NoteWindow path={path} />;
   }
 
+  if (currentWindowLabel && currentWindowLabel !== "manager") {
+    if (labelPath) {
+      return <NoteWindow path={labelPath} />;
+    }
+    return <BootScreen label={currentWindowLabel} error={routeError} />;
+  }
+
   return <ManagerWindow />;
+}
+
+function BootScreen({ label, error }: { label: string; error: string }) {
+  return (
+    <main className="boot-screen">
+      <strong>Sticky Markdown Note</strong>
+      <span>Opening note window: {label}</span>
+      {error ? <em>{error}</em> : <span>Resolving note path...</span>}
+    </main>
+  );
 }
 
 function ManagerWindow() {

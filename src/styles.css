@@ -42,6 +42,33 @@ button {
   color: #2b2d33;
 }
 
+.boot-screen {
+  display: grid;
+  min-height: 100%;
+  place-content: center;
+  gap: 8px;
+  padding: 24px;
+  background: #fff6c7;
+  color: #29251b;
+  text-align: center;
+}
+
+.boot-screen strong {
+  font-size: 16px;
+}
+
+.boot-screen span,
+.boot-screen em {
+  max-width: 320px;
+  color: #6a613c;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.boot-screen em {
+  color: #8e261c;
+}
+
 .manager-titlebar {
   display: flex;
   gap: 10px;
@@ -572,4 +599,3 @@ button {
     grid-template-columns: 1fr;
   }
 }
-

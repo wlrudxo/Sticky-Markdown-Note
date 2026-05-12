@@ -449,8 +449,7 @@ fn open_note_window(
     let note = upsert_note(&mut config, path.clone()).clone();
     drop(config);
 
-    let url = format!("/?view=note&path={}", urlencoding::encode(&path));
-    let mut builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(url.into()))
+    let mut builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App("index.html".into()))
         .title(display_name_for(&path))
         .inner_size(420.0, 640.0)
         .min_inner_size(260.0, 180.0)
@@ -481,6 +480,19 @@ fn open_note_window(
     note.last_opened_at = Some(now_ms());
     save_config_to_disk(&app, &config)?;
     Ok(label)
+}
+
+#[tauri::command]
+fn get_note_path_for_label(
+    state: tauri::State<ConfigState>,
+    label: String,
+) -> Result<Option<String>, String> {
+    let config = state.0.lock().map_err(|error| error.to_string())?;
+    Ok(config
+        .notes
+        .iter()
+        .find(|note| label_for_path(&note.path) == label)
+        .map(|note| note.path.clone()))
 }
 
 #[tauri::command]
@@ -778,6 +790,7 @@ pub fn run() {
             save_config,
             patch_note,
             read_markdown_file,
+            get_note_path_for_label,
             create_markdown_file,
             open_note_window,
             close_note_window,
