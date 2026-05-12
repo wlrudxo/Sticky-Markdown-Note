@@ -482,6 +482,11 @@ button {
   margin: 0 0 calc(var(--note-line-height) * 1em);
 }
 
+.note-content p:has(+ ul),
+.note-content p:has(+ ol) {
+  margin-bottom: 0;
+}
+
 .note-content h1,
 .note-content h2,
 .note-content h3 {
