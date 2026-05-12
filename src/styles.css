@@ -479,7 +479,7 @@ button {
 .note-content blockquote,
 .note-content pre,
 .note-content table {
-  margin: 0 0 0.7em;
+  margin: 0 0 calc(var(--note-line-height) * 1em);
 }
 
 .note-content h1,
