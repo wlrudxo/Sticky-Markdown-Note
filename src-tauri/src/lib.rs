@@ -661,13 +661,16 @@ fn reveal_path(path: String) -> Result<(), String> {
             .args(["/select,", &path])
             .spawn()
             .map_err(|error| error.to_string())?;
-        return Ok(());
+        Ok(())
     }
 
-    if let Some(parent) = Path::new(&path).parent() {
-        open_path_external(parent.to_string_lossy().to_string())
-    } else {
-        open_path_external(path)
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Some(parent) = Path::new(&path).parent() {
+            open_path_external(parent.to_string_lossy().to_string())
+        } else {
+            open_path_external(path)
+        }
     }
 }
 
