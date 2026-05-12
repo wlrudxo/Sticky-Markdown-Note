@@ -9,6 +9,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri_plugin_autostart::ManagerExt as AutostartExt;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -338,6 +340,7 @@ fn save_config(
     let mut guard = state.0.lock().map_err(|error| error.to_string())?;
     *guard = config.clone();
     save_config_to_disk(&app, &config)?;
+    sync_runtime_settings(&app, &config)?;
     Ok(config)
 }
 
@@ -535,6 +538,58 @@ fn show_note_windows(app: AppHandle, state: tauri::State<ConfigState>) -> Result
     save_config_to_disk(&app, &config)
 }
 
+fn apply_hotkey_behavior(app: &AppHandle) {
+    let state = app.state::<ConfigState>();
+    let mode = state
+        .0
+        .lock()
+        .map(|config| config.hotkey.mode.clone())
+        .unwrap_or_else(|_| "show".to_string());
+
+    if mode == "toggle" {
+        let should_hide = state
+            .0
+            .lock()
+            .map(|config| {
+                config
+                    .notes
+                    .iter()
+                    .any(|note| note.was_open_last_session && !note.hidden)
+            })
+            .unwrap_or(false);
+        if should_hide {
+            let _ = hide_note_windows(app.clone(), state.clone());
+        } else {
+            let _ = show_note_windows(app.clone(), state.clone());
+        }
+    } else {
+        let _ = show_note_windows(app.clone(), state.clone());
+    }
+}
+
+fn sync_runtime_settings(app: &AppHandle, config: &AppConfig) -> Result<(), String> {
+    let shortcuts = app.global_shortcut();
+    shortcuts.unregister_all().map_err(|error| error.to_string())?;
+    if config.hotkey.enabled && !config.hotkey.accelerator.trim().is_empty() {
+        shortcuts
+            .on_shortcuts([config.hotkey.accelerator.trim()], |app, _shortcut, event| {
+                if event.state == ShortcutState::Pressed {
+                    apply_hotkey_behavior(app);
+                }
+            })
+            .map_err(|error| error.to_string())?;
+    }
+
+    let autostart = app.autolaunch();
+    if config.windows_login_autostart {
+        autostart.enable().map_err(|error| error.to_string())?;
+    } else if autostart.is_enabled().unwrap_or(false) {
+        autostart.disable().map_err(|error| error.to_string())?;
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
 fn set_note_always_on_top(
     app: AppHandle,
@@ -690,9 +745,18 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_autostart::Builder::new().app_name("Sticky Markdown Note").build())
         .setup(|app| {
             let config = load_config(app.handle());
             app.manage(ConfigState(Mutex::new(config)));
+            let config = app
+                .state::<ConfigState>()
+                .0
+                .lock()
+                .map(|guard| guard.clone())
+                .unwrap_or_default();
+            sync_runtime_settings(app.handle(), &config)?;
             build_tray(app.handle())?;
             restore_startup_windows(app.handle());
             Ok(())
