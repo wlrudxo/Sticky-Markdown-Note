@@ -642,6 +642,11 @@ function NoteWindow({ path }: { path: string }) {
     }
   }
 
+  function startWindowDrag(event: React.MouseEvent<HTMLElement>) {
+    if (!isTauri || event.button !== 0) return;
+    void getCurrentWindow().startDragging();
+  }
+
   return (
     <main
       className={`note-shell ${focused ? "is-focused" : ""}`}
@@ -659,7 +664,7 @@ function NoteWindow({ path }: { path: string }) {
       }}
       tabIndex={-1}
     >
-      <div className="note-accent" data-tauri-drag-region>
+      <div className="note-accent" data-tauri-drag-region onMouseDown={startWindowDrag}>
         <span data-tauri-drag-region>{pathBaseName(file?.path ?? path)}</span>
       </div>
       <div className="note-toolbar" aria-hidden={!focused}>
