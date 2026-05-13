@@ -8,7 +8,7 @@ use std::{
     sync::Mutex,
     time::{SystemTime, UNIX_EPOCH},
 };
-use tauri::{AppHandle, Emitter, Manager, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_autostart::ManagerExt as AutostartExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
@@ -228,6 +228,19 @@ fn label_for_path(path: &str) -> String {
     format!("note-{:x}", hasher.finish())
 }
 
+fn percent_encode_query(value: &str) -> String {
+    value
+        .as_bytes()
+        .iter()
+        .flat_map(|byte| match *byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                vec![*byte as char]
+            }
+            byte => format!("%{byte:02X}").chars().collect(),
+        })
+        .collect()
+}
+
 fn preview_from_content(content: &str) -> String {
     let stripped = strip_frontmatter(content);
     let mut lines = stripped
@@ -445,6 +458,14 @@ fn prepare_note_window(
     state: tauri::State<ConfigState>,
     path: String,
 ) -> Result<NoteWindowSpec, String> {
+    prepare_note_window_spec(&app, &state, path)
+}
+
+fn prepare_note_window_spec(
+    app: &AppHandle,
+    state: &tauri::State<ConfigState>,
+    path: String,
+) -> Result<NoteWindowSpec, String> {
     let path = normalize_path(&path)?;
     let mut config = state.0.lock().map_err(|error| error.to_string())?;
     let default_skip_taskbar = !config.note_show_in_taskbar;
@@ -477,8 +498,42 @@ fn prepare_note_window(
             .map(|show| !show)
             .unwrap_or(default_skip_taskbar),
     };
-    save_config_to_disk(&app, &config)?;
+    save_config_to_disk(app, &config)?;
     Ok(spec)
+}
+
+fn open_note_window(
+    app: &AppHandle,
+    state: &tauri::State<ConfigState>,
+    path: String,
+) -> Result<(), String> {
+    let spec = prepare_note_window_spec(app, state, path)?;
+    if let Some(window) = app.get_webview_window(&spec.label) {
+        window.show().map_err(|error| error.to_string())?;
+        window.set_focus().map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+
+    let url = format!("index.html?path={}", percent_encode_query(&spec.path));
+    let mut builder =
+        WebviewWindowBuilder::new(app, &spec.label, WebviewUrl::App(PathBuf::from(url)))
+            .title(spec.title)
+            .inner_size(spec.width, spec.height)
+            .min_inner_size(260.0, 180.0)
+            .resizable(true)
+            .decorations(false)
+            .visible(true)
+            .focused(true)
+            .devtools(false)
+            .always_on_top(spec.always_on_top)
+            .skip_taskbar(spec.skip_taskbar);
+
+    if let (Some(x), Some(y)) = (spec.x, spec.y) {
+        builder = builder.position(x as f64, y as f64);
+    }
+
+    builder.build().map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -521,12 +576,14 @@ fn show_note_windows(app: AppHandle, state: tauri::State<ConfigState>) -> Result
         .map(|note| note.path.clone())
         .collect::<Vec<_>>();
 
-    if let Some(manager) = app.get_webview_window("manager") {
-        if paths.is_empty() {
+    if paths.is_empty() {
+        if let Some(manager) = app.get_webview_window("manager") {
             let _ = manager.show();
             let _ = manager.set_focus();
-        } else {
-            let _ = manager.emit("open-note-paths", paths.clone());
+        }
+    } else {
+        for path in &paths {
+            let _ = open_note_window(&app, &state, path.clone());
         }
     }
 
@@ -923,6 +980,21 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 fn restore_startup_windows(app: &AppHandle) {
     if let Some(manager) = app.get_webview_window("manager") {
         let _ = manager.hide();
+    }
+    let state = app.state::<ConfigState>();
+    let has_restore_notes = state
+        .0
+        .lock()
+        .map(|config| {
+            config
+                .notes
+                .iter()
+                .any(|note| note.was_open_last_session || note.open_on_startup)
+        })
+        .unwrap_or(false);
+    if has_restore_notes {
+        taskboard::show();
+        let _ = show_note_windows(app.clone(), state);
     }
 }
 
