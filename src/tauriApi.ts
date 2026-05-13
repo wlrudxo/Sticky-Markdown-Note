@@ -80,7 +80,7 @@ async function openPreparedNoteWindow(spec: NoteWindowSpec): Promise<string> {
     decorations: false,
     visible: true,
     focus: true,
-    devtools: true,
+    devtools: false,
     alwaysOnTop: spec.alwaysOnTop,
     skipTaskbar: spec.skipTaskbar,
   });

@@ -19,8 +19,8 @@
         "minWidth": 320,
         "minHeight": 440,
         "resizable": true,
-        "devtools": true,
-        "visible": true
+        "devtools": false,
+        "visible": false
       }
     ],
     "security": {

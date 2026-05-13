@@ -921,25 +921,8 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 }
 
 fn restore_startup_windows(app: &AppHandle) {
-    let state = app.state::<ConfigState>();
-    let config = state
-        .0
-        .lock()
-        .map(|guard| guard.clone())
-        .unwrap_or_default();
-    let restore_paths = config
-        .notes
-        .iter()
-        .filter(|note| note.was_open_last_session || note.open_on_startup)
-        .map(|note| note.path.clone())
-        .collect::<Vec<_>>();
-
     if let Some(manager) = app.get_webview_window("manager") {
-        if config.manager_visible_on_last_quit || restore_paths.is_empty() {
-            let _ = manager.show();
-        } else {
-            let _ = manager.hide();
-        }
+        let _ = manager.hide();
     }
 }
 
