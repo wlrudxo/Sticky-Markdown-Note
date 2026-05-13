@@ -25,7 +25,6 @@ import {
   chooseNewMarkdownPath,
   createMarkdownFile,
   getConfig,
-  getRestoreNotePaths,
   getStoredNotePath,
   isTauri,
   markNoteClosed,
@@ -146,9 +145,6 @@ function ManagerWindow() {
     void listen<string[]>("open-note-paths", (event) => {
       event.payload.forEach((notePath) => void handleOpen(notePath));
     }).then((dispose) => unlisteners.push(dispose));
-    void getRestoreNotePaths()
-      .then((paths) => paths.forEach((notePath) => void handleOpen(notePath)))
-      .catch((cause) => setError(String(cause)));
     return () => unlisteners.forEach((dispose) => dispose());
   }, [reload]);
 
