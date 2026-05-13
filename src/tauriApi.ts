@@ -34,6 +34,7 @@ type NoteWindowSpec = {
 };
 
 const notePathStoragePrefix = "smn.notePath.";
+const pendingNoteWindows = new Map<string, Promise<string>>();
 
 export function getStoredNotePath(label: string): string | null {
   return window.localStorage.getItem(`${notePathStoragePrefix}${label}`);
@@ -49,10 +50,18 @@ export function getRestoreNotePaths(): Promise<string[]> {
 
 export async function openNoteWindow(path: string): Promise<string> {
   const spec = await invoke<NoteWindowSpec>("prepare_note_window", { path });
-  const existing = await WebviewWindow.getByLabel(spec.label);
-  if (existing) {
-    await existing.show();
-    await existing.setFocus();
+  const pending = pendingNoteWindows.get(spec.label);
+  if (pending) return pending;
+
+  const open = openPreparedNoteWindow(spec).finally(() => {
+    pendingNoteWindows.delete(spec.label);
+  });
+  pendingNoteWindows.set(spec.label, open);
+  return open;
+}
+
+async function openPreparedNoteWindow(spec: NoteWindowSpec): Promise<string> {
+  if (await focusExistingNoteWindow(spec.label)) {
     return spec.label;
   }
 
@@ -79,9 +88,24 @@ export async function openNoteWindow(path: string): Promise<string> {
   await new Promise<void>((resolve, reject) => {
     void webview.once("tauri://created", () => resolve());
     void webview.once("tauri://error", (event) => reject(event.payload));
+  }).catch(async (cause) => {
+    if (await focusExistingNoteWindow(spec.label)) return;
+    throw cause;
   });
 
   return spec.label;
+}
+
+async function focusExistingNoteWindow(label: string): Promise<boolean> {
+  const existing = await WebviewWindow.getByLabel(label);
+  if (!existing) return false;
+  try {
+    await existing.show();
+    await existing.setFocus();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function markNoteClosed(path: string): Promise<void> {
@@ -98,6 +122,10 @@ export function openPathExternal(path: string): Promise<void> {
 
 export function revealPath(path: string): Promise<void> {
   return invoke("reveal_path", { path });
+}
+
+export function showManagerWindow(): Promise<void> {
+  return invoke("show_manager_window");
 }
 
 export async function chooseMarkdownFile(defaultPath?: string): Promise<string | null> {

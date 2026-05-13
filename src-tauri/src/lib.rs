@@ -8,7 +8,7 @@ use std::{
     sync::Mutex,
     time::{SystemTime, UNIX_EPOCH},
 };
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 use tauri_plugin_autostart::ManagerExt as AutostartExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
@@ -464,11 +464,18 @@ fn prepare_note_window(
         title: display_name_for(&path),
         path,
         width: if rect.width > 0.0 { rect.width } else { 420.0 },
-        height: if rect.height > 0.0 { rect.height } else { 640.0 },
+        height: if rect.height > 0.0 {
+            rect.height
+        } else {
+            640.0
+        },
         x: rect.x,
         y: rect.y,
         always_on_top: note.always_on_top,
-        skip_taskbar: note.show_in_taskbar.map(|show| !show).unwrap_or(default_skip_taskbar),
+        skip_taskbar: note
+            .show_in_taskbar
+            .map(|show| !show)
+            .unwrap_or(default_skip_taskbar),
     };
     save_config_to_disk(&app, &config)?;
     Ok(spec)
@@ -533,6 +540,186 @@ fn show_note_windows(app: AppHandle, state: tauri::State<ConfigState>) -> Result
 }
 
 #[tauri::command]
+fn show_manager_window(app: AppHandle) -> Result<(), String> {
+    let manager = app
+        .get_webview_window("manager")
+        .ok_or_else(|| "Manager window is not available".to_string())?;
+    manager.show().map_err(|error| error.to_string())?;
+    manager.set_focus().map_err(|error| error.to_string())?;
+    let _ = manager.emit("tray-open-manager", ());
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+mod taskboard {
+    use std::{
+        ffi::c_void,
+        ptr, thread,
+        time::{Duration, Instant},
+    };
+
+    type Bool = i32;
+    type Hwnd = *mut c_void;
+    type Lparam = isize;
+
+    type EnumWindowsProc = Option<unsafe extern "system" fn(Hwnd, Lparam) -> Bool>;
+
+    #[link(name = "user32")]
+    extern "system" {
+        fn EnumWindows(callback: EnumWindowsProc, lparam: Lparam) -> Bool;
+        fn GetWindowTextW(hwnd: Hwnd, text: *mut u16, count: i32) -> i32;
+        fn IsWindowVisible(hwnd: Hwnd) -> Bool;
+        fn ShowWindow(hwnd: Hwnd, command: i32) -> Bool;
+        fn SetForegroundWindow(hwnd: Hwnd) -> Bool;
+    }
+
+    const SW_HIDE: i32 = 0;
+    const SW_SHOW: i32 = 5;
+    const SW_RESTORE: i32 = 9;
+
+    unsafe extern "system" fn enum_taskboard(hwnd: Hwnd, lparam: Lparam) -> Bool {
+        let mut buffer = [0u16; 512];
+        let len = GetWindowTextW(hwnd, buffer.as_mut_ptr(), buffer.len() as i32);
+        if len > 0 {
+            let title = String::from_utf16_lossy(&buffer[..len as usize]);
+            if title.contains("TasksBoard") {
+                *(lparam as *mut Hwnd) = hwnd;
+                return 0;
+            }
+        }
+        1
+    }
+
+    fn find_window() -> Option<Hwnd> {
+        let mut found: Hwnd = ptr::null_mut();
+        unsafe {
+            EnumWindows(Some(enum_taskboard), &mut found as *mut Hwnd as Lparam);
+        }
+        if found.is_null() {
+            None
+        } else {
+            Some(found)
+        }
+    }
+
+    pub fn is_visible() -> bool {
+        find_window()
+            .map(|hwnd| unsafe { IsWindowVisible(hwnd) != 0 })
+            .unwrap_or(false)
+    }
+
+    pub fn hide() {
+        if let Some(hwnd) = find_window() {
+            unsafe {
+                ShowWindow(hwnd, SW_HIDE);
+            }
+        }
+    }
+
+    pub fn show() {
+        let hwnd = find_window().or_else(|| {
+            let lnk = dirs::home_dir()?
+                .join("OneDrive")
+                .join("바탕 화면")
+                .join("TasksBoard.lnk");
+            let _ = std::process::Command::new("cmd")
+                .args(["/C", "start", "", &lnk.to_string_lossy()])
+                .spawn();
+            let deadline = Instant::now() + Duration::from_secs(4);
+            while Instant::now() < deadline {
+                if let Some(hwnd) = find_window() {
+                    return Some(hwnd);
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+            None
+        });
+
+        if let Some(hwnd) = hwnd {
+            unsafe {
+                ShowWindow(hwnd, SW_RESTORE);
+                ShowWindow(hwnd, SW_SHOW);
+                SetForegroundWindow(hwnd);
+            }
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+mod taskboard {
+    pub fn is_visible() -> bool {
+        false
+    }
+    pub fn hide() {}
+    pub fn show() {}
+}
+
+#[cfg(target_os = "windows")]
+mod app_instance {
+    use std::{
+        ffi::c_void,
+        ptr,
+        sync::atomic::{AtomicPtr, Ordering},
+    };
+
+    type Bool = i32;
+    type Handle = *mut c_void;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn CreateMutexW(attributes: *mut c_void, initial_owner: Bool, name: *const u16) -> Handle;
+        fn GetLastError() -> u32;
+    }
+
+    const ERROR_ALREADY_EXISTS: u32 = 183;
+    static INSTANCE_MUTEX: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
+
+    pub fn acquire() -> bool {
+        let name = "com.wlrudxo.sticky-markdown-note.single-instance"
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        let handle = unsafe { CreateMutexW(ptr::null_mut(), 1, name.as_ptr()) };
+        if handle.is_null() {
+            return true;
+        }
+        if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+            return false;
+        }
+        INSTANCE_MUTEX.store(handle, Ordering::Relaxed);
+        true
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+mod app_instance {
+    pub fn acquire() -> bool {
+        true
+    }
+}
+
+fn toggle_workspace(app: &AppHandle, state: tauri::State<ConfigState>) {
+    let notes_visible = state
+        .0
+        .lock()
+        .map(|config| {
+            config
+                .notes
+                .iter()
+                .any(|note| note.was_open_last_session && !note.hidden)
+        })
+        .unwrap_or(false);
+
+    if notes_visible || taskboard::is_visible() {
+        let _ = hide_note_windows(app.clone(), state);
+        taskboard::hide();
+    } else {
+        taskboard::show();
+        let _ = show_note_windows(app.clone(), state);
+    }
+}
+
+#[tauri::command]
 fn get_restore_note_paths(state: tauri::State<ConfigState>) -> Result<Vec<String>, String> {
     let config = state.0.lock().map_err(|error| error.to_string())?;
     Ok(config
@@ -551,7 +738,9 @@ fn apply_hotkey_behavior(app: &AppHandle) {
         .map(|config| config.hotkey.mode.clone())
         .unwrap_or_else(|_| "show".to_string());
 
-    if mode == "toggle" {
+    if mode == "workspace" {
+        toggle_workspace(app, state.clone());
+    } else if mode == "toggle" {
         let should_hide = state
             .0
             .lock()
@@ -574,14 +763,19 @@ fn apply_hotkey_behavior(app: &AppHandle) {
 
 fn sync_runtime_settings(app: &AppHandle, config: &AppConfig) -> Result<(), String> {
     let shortcuts = app.global_shortcut();
-    shortcuts.unregister_all().map_err(|error| error.to_string())?;
+    shortcuts
+        .unregister_all()
+        .map_err(|error| error.to_string())?;
     if config.hotkey.enabled && !config.hotkey.accelerator.trim().is_empty() {
         shortcuts
-            .on_shortcuts([config.hotkey.accelerator.trim()], |app, _shortcut, event| {
-                if event.state == ShortcutState::Pressed {
-                    apply_hotkey_behavior(app);
-                }
-            })
+            .on_shortcuts(
+                [config.hotkey.accelerator.trim()],
+                |app, _shortcut, event| {
+                    if event.state == ShortcutState::Pressed {
+                        apply_hotkey_behavior(app);
+                    }
+                },
+            )
             .map_err(|error| error.to_string())?;
     }
 
@@ -694,8 +888,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         tray = tray.icon(icon.clone());
     }
 
-    tray
-        .menu(&menu)
+    tray.menu(&menu)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open_manager" => {
                 if let Some(window) = app.get_webview_window("manager") {
@@ -729,7 +922,11 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 
 fn restore_startup_windows(app: &AppHandle) {
     let state = app.state::<ConfigState>();
-    let config = state.0.lock().map(|guard| guard.clone()).unwrap_or_default();
+    let config = state
+        .0
+        .lock()
+        .map(|guard| guard.clone())
+        .unwrap_or_default();
     let restore_paths = config
         .notes
         .iter()
@@ -748,13 +945,21 @@ fn restore_startup_windows(app: &AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    if !app_instance::acquire() {
+        return;
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .plugin(tauri_plugin_autostart::Builder::new().app_name("Sticky Markdown Note").build())
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .app_name("Sticky Markdown Note")
+                .build(),
+        )
         .setup(|app| {
             let config = load_config(app.handle());
             app.manage(ConfigState(Mutex::new(config)));
@@ -769,6 +974,14 @@ pub fn run() {
             restore_startup_windows(app.handle());
             Ok(())
         })
+        .on_window_event(|window, event| {
+            if window.label() == "manager" {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             get_config,
             save_config,
@@ -780,6 +993,7 @@ pub fn run() {
             mark_note_closed,
             hide_note_windows,
             show_note_windows,
+            show_manager_window,
             set_note_always_on_top,
             open_path_external,
             reveal_path

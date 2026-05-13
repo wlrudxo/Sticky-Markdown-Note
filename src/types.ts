@@ -39,7 +39,7 @@ export type NoteRecord = {
 export type HotkeySettings = {
   enabled: boolean;
   accelerator: string;
-  mode: "show" | "toggle" | string;
+  mode: "show" | "toggle" | "workspace" | string;
 };
 
 export type AppConfig = {
@@ -76,4 +76,3 @@ export type NotePatch = {
   scrollTop?: number;
   window?: WindowRect;
 };
-

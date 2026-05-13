@@ -9,6 +9,7 @@ import {
   EyeOff,
   FilePlus2,
   FolderOpen,
+  LayoutDashboard,
   Pin,
   PinOff,
   RefreshCw,
@@ -33,6 +34,7 @@ import {
   patchNote,
   readMarkdownFile,
   revealPath,
+  showManagerWindow,
   saveConfig,
   setNoteAlwaysOnTop,
 } from "./tauriApi";
@@ -462,6 +464,7 @@ function SettingsDialog({
             >
               <option value="show">Bring notes to front</option>
               <option value="toggle">Toggle notes</option>
+              <option value="workspace">Toggle workspace</option>
             </select>
           </label>
         </div>
@@ -668,6 +671,9 @@ function NoteWindow({ path }: { path: string }) {
         <span data-tauri-drag-region>{pathBaseName(file?.path ?? path)}</span>
       </div>
       <div className="note-toolbar" aria-hidden={!focused}>
+        <button title="Open manager" onClick={() => void showManagerWindow()}>
+          <LayoutDashboard size={15} />
+        </button>
         <button title="Pin" onClick={() => void togglePin()}>
           {note?.pinned ? <PinOff size={15} /> : <Pin size={15} />}
         </button>
