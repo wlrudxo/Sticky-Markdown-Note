@@ -62,6 +62,24 @@ export type FileReadResult = {
   readAt: number;
 };
 
+export type SaveMarkdownFileRequest = {
+  path: string;
+  content: string;
+  baseModifiedMs?: number | null;
+  baseSize?: number | null;
+  force?: boolean;
+};
+
+export type SaveMarkdownFileResult =
+  | {
+      status: "saved";
+      file: FileReadResult;
+    }
+  | {
+      status: "conflict";
+      file: FileReadResult;
+    };
+
 export type NotePatch = {
   path: string;
   pinned?: boolean;

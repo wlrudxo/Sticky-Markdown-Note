@@ -144,6 +144,25 @@ struct NoteWindowSpec {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct SaveMarkdownRequest {
+    path: String,
+    content: String,
+    base_modified_ms: Option<i64>,
+    base_size: Option<u64>,
+    force: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+enum SaveMarkdownResult {
+    #[serde(rename = "saved")]
+    Saved { file: FileReadResult },
+    #[serde(rename = "conflict")]
+    Conflict { file: FileReadResult },
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct SaveNotePatch {
     path: String,
     pinned: Option<bool>,
@@ -349,6 +368,23 @@ fn read_markdown_from_path(path: &str) -> Result<FileReadResult, String> {
     })
 }
 
+fn refresh_note_after_read(
+    app: &AppHandle,
+    state: &tauri::State<ConfigState>,
+    result: &FileReadResult,
+) -> Result<AppConfig, String> {
+    let mut config = state.0.lock().map_err(|error| error.to_string())?;
+    let note = upsert_note(&mut config, result.path.clone());
+    note.display_name = display_name_for(&result.path);
+    note.last_read_at = Some(result.read_at);
+    note.last_modified_ms = result.modified_ms;
+    note.last_size = result.size;
+    note.last_preview_text = result.preview_text.clone();
+    note.last_opened_at = Some(result.read_at);
+    save_config_to_disk(app, &config)?;
+    Ok(config.clone())
+}
+
 #[tauri::command]
 fn get_config(app: AppHandle, state: tauri::State<ConfigState>) -> Result<AppConfig, String> {
     let mut config = state.0.lock().map_err(|error| error.to_string())?;
@@ -424,16 +460,31 @@ fn read_markdown_file(
     path: String,
 ) -> Result<FileReadResult, String> {
     let result = read_markdown_from_path(&path)?;
-    let mut config = state.0.lock().map_err(|error| error.to_string())?;
-    let note = upsert_note(&mut config, result.path.clone());
-    note.display_name = display_name_for(&result.path);
-    note.last_read_at = Some(result.read_at);
-    note.last_modified_ms = result.modified_ms;
-    note.last_size = result.size;
-    note.last_preview_text = result.preview_text.clone();
-    note.last_opened_at = Some(result.read_at);
-    save_config_to_disk(&app, &config)?;
+    refresh_note_after_read(&app, &state, &result)?;
     Ok(result)
+}
+
+#[tauri::command]
+fn save_markdown_file(
+    app: AppHandle,
+    state: tauri::State<ConfigState>,
+    request: SaveMarkdownRequest,
+) -> Result<SaveMarkdownResult, String> {
+    let path = normalize_path(&request.path)?;
+    let current = read_markdown_from_path(&path)?;
+    let force = request.force.unwrap_or(false);
+    let changed =
+        current.modified_ms != request.base_modified_ms || current.size != request.base_size;
+
+    if changed && !force {
+        refresh_note_after_read(&app, &state, &current)?;
+        return Ok(SaveMarkdownResult::Conflict { file: current });
+    }
+
+    fs::write(&path, request.content.as_bytes()).map_err(|error| error.to_string())?;
+    let saved = read_markdown_from_path(&path)?;
+    refresh_note_after_read(&app, &state, &saved)?;
+    Ok(SaveMarkdownResult::Saved { file: saved })
 }
 
 #[tauri::command]
@@ -1042,6 +1093,7 @@ pub fn run() {
             save_config,
             patch_note,
             read_markdown_file,
+            save_markdown_file,
             prepare_note_window,
             create_markdown_file,
             get_restore_note_paths,

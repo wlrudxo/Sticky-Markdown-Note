@@ -417,6 +417,16 @@ button {
   background: rgb(255 255 255 / 0.82);
 }
 
+.note-toolbar .note-view-mode-button {
+  border: 0;
+  background: #cfe8ff;
+  color: #174b7a;
+}
+
+.note-toolbar .note-view-mode-button:hover {
+  background: #b7dcff;
+}
+
 .note-banner {
   position: absolute;
   top: 34px;
@@ -439,6 +449,20 @@ button {
   pointer-events: none;
 }
 
+.note-edit-warning {
+  position: absolute;
+  top: 34px;
+  right: 10px;
+  left: 10px;
+  z-index: 13;
+  padding: 6px 9px;
+  border: 1px solid rgb(174 125 31 / 0.42);
+  border-radius: 8px;
+  background: rgb(255 248 220 / 0.96);
+  color: #6d4d10;
+  font-size: 12px;
+}
+
 .note-content {
   width: 100%;
   height: 100%;
@@ -449,6 +473,33 @@ button {
   line-height: var(--note-line-height);
   scrollbar-width: none;
   user-select: text;
+}
+
+.note-editor {
+  width: 100%;
+  height: 100%;
+  resize: none;
+  border: 0;
+  outline: 0;
+  padding: calc(var(--note-padding) + 18px) var(--note-padding) 35vh;
+  background: var(--note-bg);
+  color: var(--note-text);
+  font-family:
+    "Segoe UI",
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
+  font-size: var(--note-font-size);
+  line-height: var(--note-line-height);
+  scrollbar-width: thin;
+  scrollbar-color: rgb(92 80 37 / 0.35) transparent;
+  tab-size: 3;
+  white-space: pre-wrap;
+}
+
+.note-editor::selection {
+  background: rgb(53 97 171 / 0.22);
 }
 
 .note-shell.is-focused .note-content,
@@ -509,11 +560,13 @@ button {
 
 .note-content ul,
 .note-content ol {
-  padding-left: 1.45em;
+  margin-left: 0;
+  padding-left: 1.55em;
 }
 
 .note-content li {
   margin: 0.1em 0;
+  padding-left: 0.1em;
 }
 
 .note-content li:has(input[type="checkbox"]:checked) {
@@ -592,6 +645,36 @@ button {
 .note-context-menu {
   right: 10px;
   bottom: 10px;
+}
+
+.note-dialog {
+  display: grid;
+  gap: 10px;
+  width: min(360px, 100%);
+  padding: 16px;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #252a32;
+  box-shadow: 0 16px 46px rgb(0 0 0 / 0.24);
+}
+
+.note-dialog h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.note-dialog p {
+  margin: 0;
+  color: #5d6674;
+  font-size: 13px;
+  line-height: 1.42;
+}
+
+.note-dialog footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
 }
 
 @media (max-width: 420px) {

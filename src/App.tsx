@@ -13,6 +13,7 @@ import {
   Pin,
   PinOff,
   RefreshCw,
+  Save,
   Settings,
   Star,
   X,
@@ -33,6 +34,7 @@ import {
   patchNote,
   readMarkdownFile,
   revealPath,
+  saveMarkdownFile,
   showManagerWindow,
   saveConfig,
   setNoteAlwaysOnTop,
@@ -481,20 +483,33 @@ function NoteWindow({ path }: { path: string }) {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [file, setFile] = useState<FileReadResult | null>(null);
   const [lastGoodContent, setLastGoodContent] = useState("");
+  const [isEditing, setIsEditing] = useState(false);
+  const [draftContent, setDraftContent] = useState("");
+  const [editBase, setEditBase] = useState<FileReadResult | null>(null);
+  const [externalConflict, setExternalConflict] = useState<FileReadResult | null>(null);
+  const [forceNextSave, setForceNextSave] = useState(false);
+  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const [focused, setFocused] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const statusTimer = useRef<number | null>(null);
+  const acknowledgedConflictKey = useRef<string | null>(null);
+  const pendingScrollRatio = useRef<number | null>(null);
 
   const note = config?.notes.find((item) => item.path === (file?.path ?? path));
   const theme = config?.theme ?? fallbackTheme;
   const content = file?.content ?? lastGoodContent;
+  const hasDraftChanges = isEditing && draftContent !== (file?.content ?? lastGoodContent);
+  const externalOverwritePending = isEditing && forceNextSave;
+  const editBlocked = Boolean(externalConflict || discardConfirmOpen);
 
   const load = useCallback(
     async (silent = false) => {
+      if (isEditing) return;
       try {
         const before = contentRef.current;
         const nearBottom = before ? before.scrollHeight - before.scrollTop - before.clientHeight < 96 : true;
@@ -518,7 +533,7 @@ function NoteWindow({ path }: { path: string }) {
         setError(String(cause));
       }
     },
-    [path],
+    [isEditing, path],
   );
 
   function showStatus(message: string) {
@@ -537,6 +552,14 @@ function NoteWindow({ path }: { path: string }) {
       void readMarkdownFile(path)
         .then((result) => {
           const changed = result.modifiedMs !== file?.modifiedMs || result.size !== file?.size;
+          const conflictKey = `${result.modifiedMs ?? "none"}:${result.size ?? "none"}`;
+          if (changed && isEditing) {
+            if (conflictKey !== acknowledgedConflictKey.current) {
+              setExternalConflict(result);
+              setError("");
+            }
+            return;
+          }
           if (changed) {
             setFile(result);
             setLastGoodContent(result.content);
@@ -554,7 +577,7 @@ function NoteWindow({ path }: { path: string }) {
         .catch((cause) => setError(String(cause)));
     }, 1200);
     return () => window.clearInterval(timer);
-  }, [file?.modifiedMs, file?.size, path]);
+  }, [file?.modifiedMs, file?.size, isEditing, path]);
 
   useEffect(() => {
     if (!isTauri) return;
@@ -584,6 +607,21 @@ function NoteWindow({ path }: { path: string }) {
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
+      if (editBlocked) {
+        if (event.ctrlKey && event.key.toLowerCase() === "s") event.preventDefault();
+        return;
+      }
+      if (isEditing && event.ctrlKey && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        void saveDraft();
+        return;
+      }
+      if (isEditing && event.key === "Escape") {
+        event.preventDefault();
+        requestExitEditMode();
+        return;
+      }
+      if (isEditing) return;
       if (event.ctrlKey && event.key.toLowerCase() === "a") {
         event.preventDefault();
         selectNoteBody();
@@ -591,7 +629,16 @@ function NoteWindow({ path }: { path: string }) {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [draftContent, editBase, editBlocked, file, forceNextSave, isEditing, lastGoodContent]);
+
+  useEffect(() => {
+    if (!isEditing) return;
+    requestAnimationFrame(() => {
+      editorRef.current?.focus();
+      restorePendingScroll(editorRef.current, false);
+      requestAnimationFrame(() => restorePendingScroll(editorRef.current));
+    });
+  }, [isEditing]);
 
   function selectNoteBody() {
     const node = contentRef.current;
@@ -609,6 +656,120 @@ function NoteWindow({ path }: { path: string }) {
       await navigator.clipboard.writeText(selected);
       showStatus("Copied");
     }
+  }
+
+  function getScrollRatio(node: HTMLElement | null) {
+    if (!node) return 0;
+    const maxScrollTop = node.scrollHeight - node.clientHeight;
+    if (maxScrollTop <= 0) return 0;
+    return node.scrollTop / maxScrollTop;
+  }
+
+  function restorePendingScroll(node: HTMLElement | null, clear = true) {
+    const ratio = pendingScrollRatio.current;
+    if (ratio === null || !node) return;
+    const maxScrollTop = node.scrollHeight - node.clientHeight;
+    node.scrollTop = maxScrollTop > 0 ? maxScrollTop * ratio : 0;
+    if (clear) pendingScrollRatio.current = null;
+  }
+
+  function startEditing() {
+    const current = file;
+    if (!current) return;
+    if (current.encoding !== "utf-8") {
+      setError("이 파일은 UTF-8이 아니라 내장 편집을 지원하지 않습니다. 외부 에디터를 사용하세요.");
+      return;
+    }
+    setMenuOpen(false);
+    setError("");
+    setDraftContent(current.content);
+    setEditBase(current);
+    setExternalConflict(null);
+    setForceNextSave(false);
+    acknowledgedConflictKey.current = null;
+    pendingScrollRatio.current = getScrollRatio(contentRef.current);
+    setIsEditing(true);
+  }
+
+  async function saveDraft() {
+    if (!isEditing || !editBase) return;
+    try {
+      const result = await saveMarkdownFile({
+        path: file?.path ?? path,
+        content: draftContent,
+        baseModifiedMs: editBase.modifiedMs,
+        baseSize: editBase.size,
+        force: forceNextSave,
+      });
+      if (result.status === "conflict") {
+        setExternalConflict(result.file);
+        acknowledgedConflictKey.current = null;
+        return;
+      }
+      setFile(result.file);
+      setLastGoodContent(result.file.content);
+      setDraftContent(result.file.content);
+      setEditBase(result.file);
+      setForceNextSave(false);
+      setExternalConflict(null);
+      acknowledgedConflictKey.current = null;
+      setConfig(await getConfig());
+      showStatus("Saved");
+    } catch (cause) {
+      setError(String(cause));
+    }
+  }
+
+  function requestExitEditMode() {
+    if (hasDraftChanges || forceNextSave) {
+      setDiscardConfirmOpen(true);
+      return;
+    }
+    exitEditMode();
+  }
+
+  function exitEditMode() {
+    pendingScrollRatio.current = getScrollRatio(editorRef.current);
+    setIsEditing(false);
+    setDraftContent("");
+    setEditBase(null);
+    setExternalConflict(null);
+    setForceNextSave(false);
+    setDiscardConfirmOpen(false);
+    acknowledgedConflictKey.current = null;
+  }
+
+  useEffect(() => {
+    if (isEditing) return;
+    requestAnimationFrame(() => restorePendingScroll(contentRef.current));
+  }, [isEditing]);
+
+  function discardDraft() {
+    setDraftContent(file?.content ?? lastGoodContent);
+    exitEditMode();
+  }
+
+  function keepLocalDraft() {
+    if (!externalConflict) return;
+    acknowledgedConflictKey.current = `${externalConflict.modifiedMs ?? "none"}:${externalConflict.size ?? "none"}`;
+    setEditBase(externalConflict);
+    setForceNextSave(true);
+    setExternalConflict(null);
+    showStatus("External change will be overwritten");
+    requestAnimationFrame(() => editorRef.current?.focus());
+  }
+
+  function applyExternalChange() {
+    if (!externalConflict) return;
+    setFile(externalConflict);
+    setLastGoodContent(externalConflict.content);
+    setDraftContent(externalConflict.content);
+    setEditBase(externalConflict);
+    setForceNextSave(false);
+    acknowledgedConflictKey.current = null;
+    setExternalConflict(null);
+    showStatus("External change applied");
+    requestAnimationFrame(() => editorRef.current?.focus());
   }
 
   async function toggleAlwaysOnTop() {
@@ -641,6 +802,12 @@ function NoteWindow({ path }: { path: string }) {
     }
   }
 
+  function handleContentDoubleClick(event: React.MouseEvent<HTMLElement>) {
+    const target = event.target as HTMLElement | null;
+    if (target?.closest("a, button, input, textarea, select")) return;
+    startEditing();
+  }
+
   function startWindowDrag(event: React.MouseEvent<HTMLElement>) {
     if (!isTauri || event.button !== 0) return;
     void getCurrentWindow().startDragging();
@@ -667,9 +834,23 @@ function NoteWindow({ path }: { path: string }) {
         <span data-tauri-drag-region>{pathBaseName(file?.path ?? path)}</span>
       </div>
       <div className="note-toolbar" aria-hidden={!focused}>
+        {isEditing ? (
+          <button className="note-view-mode-button" title="View mode" onClick={requestExitEditMode}>
+            <Check size={15} />
+          </button>
+        ) : null}
         <button title="Open manager" onClick={() => void showManagerWindow()}>
           <LayoutDashboard size={15} />
         </button>
+        {isEditing ? (
+          <button title="Save" onClick={() => void saveDraft()}>
+            <Save size={15} />
+          </button>
+        ) : (
+          <button title="Edit note" onClick={startEditing}>
+            <Edit3 size={15} />
+          </button>
+        )}
         <button title="Pin" onClick={() => void togglePin()}>
           {note?.pinned ? <PinOff size={15} /> : <Pin size={15} />}
         </button>
@@ -679,46 +860,62 @@ function NoteWindow({ path }: { path: string }) {
         <button title="Always on top" onClick={() => void toggleAlwaysOnTop()}>
           <Star size={15} fill={note?.alwaysOnTop ? "currentColor" : "none"} />
         </button>
-        <button title="Open in external editor" onClick={() => void openPathExternal(file?.path ?? path)}>
-          <Edit3 size={15} />
-        </button>
-        <button title="Refresh" onClick={() => void load()}>
-          <RefreshCw size={15} />
-        </button>
-        <button
-          title="Go to bottom"
-          onClick={() => {
-            if (contentRef.current) contentRef.current.scrollTop = contentRef.current.scrollHeight;
-          }}
-        >
-          <ArrowDownToLine size={15} />
-        </button>
+        {!isEditing ? (
+          <>
+            <button title="Refresh" onClick={() => void load()}>
+              <RefreshCw size={15} />
+            </button>
+            <button
+              title="Go to bottom"
+              onClick={() => {
+                if (contentRef.current) contentRef.current.scrollTop = contentRef.current.scrollHeight;
+              }}
+            >
+              <ArrowDownToLine size={15} />
+            </button>
+          </>
+        ) : null}
         <button title="Close note" onClick={() => void closeCurrentNote(file?.path ?? path)}>
           <X size={15} />
         </button>
       </div>
       {error ? <div className="note-banner">{error}</div> : null}
+      {externalOverwritePending ? <div className="note-edit-warning">External change will be overwritten</div> : null}
       {status ? <div className="note-status">{status}</div> : null}
-      <article ref={contentRef} className="note-content">
-        {!hasLoadedOnce && !error ? <p className="empty-body">Loading {pathBaseName(path)}...</p> : null}
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          components={{
-            a: ({ href, children }) => (
-              <a href={href} title="Ctrl+Click to open" onClick={(event) => handleLink(event, href)}>
-                {children}
-              </a>
-            ),
-            li: ({ children, className }) => <li className={className}>{children}</li>,
-          }}
-        >
-          {content}
-        </ReactMarkdown>
-        {hasLoadedOnce && !content.trim() ? <p className="empty-body">Empty note</p> : null}
-      </article>
+      {isEditing ? (
+        <textarea
+          ref={editorRef}
+          className="note-editor"
+          value={draftContent}
+          readOnly={editBlocked}
+          spellCheck={false}
+          onChange={(event) => setDraftContent(event.target.value)}
+        />
+      ) : (
+        <article ref={contentRef} className="note-content" onDoubleClick={handleContentDoubleClick}>
+          {!hasLoadedOnce && !error ? <p className="empty-body">Loading {pathBaseName(path)}...</p> : null}
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={{
+              a: ({ href, children }) => (
+                <a href={href} title="Ctrl+Click to open" onClick={(event) => handleLink(event, href)}>
+                  {children}
+                </a>
+              ),
+              li: ({ children, className }) => <li className={className}>{children}</li>,
+            }}
+          >
+            {content}
+          </ReactMarkdown>
+          {hasLoadedOnce && !content.trim() ? <p className="empty-body">Empty note</p> : null}
+        </article>
+      )}
       <div className="resize-grip" aria-hidden />
       {menuOpen ? (
         <div className="note-context-menu">
+          {!isEditing ? <button onClick={startEditing}>Edit note</button> : null}
+          {isEditing ? <button onClick={() => void saveDraft()}>Save</button> : null}
+          {isEditing ? <button onClick={requestExitEditMode}>View mode</button> : null}
           <button onClick={() => void toggleAlwaysOnTop()}>
             {note?.alwaysOnTop ? "Disable always on top" : "Always on top"}
           </button>
@@ -727,17 +924,51 @@ function NoteWindow({ path }: { path: string }) {
           </button>
           <button onClick={() => void togglePin()}>{note?.pinned ? "Unpin" : "Pin"}</button>
           <button onClick={() => void openPathExternal(file?.path ?? path)}>Open in external editor</button>
-          <button onClick={() => void load()}>Refresh</button>
-          <button onClick={selectNoteBody}>Select all</button>
-          <button onClick={() => void copySelection()}>
-            <Copy size={14} />
-            Copy
-          </button>
+          {!isEditing ? <button onClick={() => void load()}>Refresh</button> : null}
+          {!isEditing ? <button onClick={selectNoteBody}>Select all</button> : null}
+          {!isEditing ? (
+            <button onClick={() => void copySelection()}>
+              <Copy size={14} />
+              Copy
+            </button>
+          ) : null}
           <button onClick={() => void closeCurrentNote(file?.path ?? path)}>Close note</button>
           <button onClick={() => setMenuOpen(false)}>
             <Check size={14} />
             Close menu
           </button>
+        </div>
+      ) : null}
+      {externalConflict ? (
+        <div className="modal-backdrop">
+          <section className="note-dialog">
+            <h2>External change detected</h2>
+            <p>The Markdown file changed outside this note while you were editing.</p>
+            <footer>
+              <button className="secondary-button" onClick={keepLocalDraft}>
+                Keep my edit
+              </button>
+              <button className="primary-button" onClick={applyExternalChange}>
+                Use external change
+              </button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
+      {discardConfirmOpen ? (
+        <div className="modal-backdrop">
+          <section className="note-dialog">
+            <h2>Discard changes?</h2>
+            <p>Your unsaved Markdown edits will be lost.</p>
+            <footer>
+              <button className="secondary-button" onClick={() => setDiscardConfirmOpen(false)}>
+                Keep editing
+              </button>
+              <button className="primary-button" onClick={discardDraft}>
+                Discard
+              </button>
+            </footer>
+          </section>
         </div>
       ) : null}
     </main>

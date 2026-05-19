@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import type { AppConfig, FileReadResult, NotePatch } from "./types";
+import type { AppConfig, FileReadResult, NotePatch, SaveMarkdownFileRequest, SaveMarkdownFileResult } from "./types";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 export const isTauri = "__TAURI_INTERNALS__" in window;
@@ -19,6 +19,10 @@ export function patchNote(patch: NotePatch): Promise<AppConfig> {
 
 export function readMarkdownFile(path: string): Promise<FileReadResult> {
   return invoke("read_markdown_file", { path });
+}
+
+export function saveMarkdownFile(request: SaveMarkdownFileRequest): Promise<SaveMarkdownFileResult> {
+  return invoke("save_markdown_file", { request });
 }
 
 type NoteWindowSpec = {
