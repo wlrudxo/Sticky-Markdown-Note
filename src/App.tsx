@@ -53,6 +53,13 @@ const fallbackTheme: ThemeSettings = {
   opacity: 1,
 };
 
+type ContextMenuPosition = {
+  x: number;
+  y: number;
+  alignX: "left" | "right";
+  alignY: "top" | "bottom";
+};
+
 function getSearchParam(name: string) {
   return new URLSearchParams(window.location.search).get(name);
 }
@@ -493,6 +500,12 @@ function NoteWindow({ path }: { path: string }) {
   const [status, setStatus] = useState("");
   const [focused, setFocused] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPosition, setMenuPosition] = useState<ContextMenuPosition>({
+    x: 12,
+    y: 12,
+    alignX: "left",
+    alignY: "top",
+  });
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
@@ -621,6 +634,10 @@ function NoteWindow({ path }: { path: string }) {
         requestExitEditMode();
         return;
       }
+      if (!isEditing && event.key === "Escape") {
+        setMenuOpen(false);
+        return;
+      }
       if (isEditing) return;
       if (event.ctrlKey && event.key.toLowerCase() === "a") {
         event.preventDefault();
@@ -630,6 +647,37 @@ function NoteWindow({ path }: { path: string }) {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [draftContent, editBase, editBlocked, file, forceNextSave, isEditing, lastGoodContent]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+
+    function closeMenu(event: MouseEvent) {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest(".note-context-menu")) return;
+      setMenuOpen(false);
+    }
+
+    function closeMenuOnScroll() {
+      setMenuOpen(false);
+    }
+
+    window.addEventListener("mousedown", closeMenu);
+    window.addEventListener("scroll", closeMenuOnScroll, true);
+    return () => {
+      window.removeEventListener("mousedown", closeMenu);
+      window.removeEventListener("scroll", closeMenuOnScroll, true);
+    };
+  }, [menuOpen]);
+
+  useEffect(() => {
+    function returnToViewModeOnWindowBlur() {
+      if (!isEditing || hasDraftChanges || forceNextSave || editBlocked) return;
+      exitEditMode();
+    }
+
+    window.addEventListener("blur", returnToViewModeOnWindowBlur);
+    return () => window.removeEventListener("blur", returnToViewModeOnWindowBlur);
+  }, [editBlocked, forceNextSave, hasDraftChanges, isEditing]);
 
   useEffect(() => {
     if (!isEditing) return;
@@ -813,6 +861,28 @@ function NoteWindow({ path }: { path: string }) {
     void getCurrentWindow().startDragging();
   }
 
+  function openContextMenu(event: React.MouseEvent<HTMLElement>) {
+    event.preventDefault();
+    setFocused(true);
+    setMenuPosition({
+      x: event.clientX,
+      y: event.clientY,
+      alignX: event.clientX > window.innerWidth / 2 ? "right" : "left",
+      alignY: event.clientY > window.innerHeight / 2 ? "bottom" : "top",
+    });
+    setMenuOpen(true);
+  }
+
+  function runMenuAction(action: () => void) {
+    setMenuOpen(false);
+    action();
+  }
+
+  function runAsyncMenuAction(action: () => Promise<unknown>) {
+    setMenuOpen(false);
+    void action();
+  }
+
   return (
     <main
       className={`note-shell ${focused ? "is-focused" : ""}`}
@@ -823,11 +893,7 @@ function NoteWindow({ path }: { path: string }) {
           setFocused(false);
         }
       }}
-      onContextMenu={(event) => {
-        event.preventDefault();
-        setFocused(true);
-        setMenuOpen(true);
-      }}
+      onContextMenu={openContextMenu}
       tabIndex={-1}
     >
       <div className="note-accent" data-tauri-drag-region onMouseDown={startWindowDrag}>
@@ -912,27 +978,38 @@ function NoteWindow({ path }: { path: string }) {
       )}
       <div className="resize-grip" aria-hidden />
       {menuOpen ? (
-        <div className="note-context-menu">
-          {!isEditing ? <button onClick={startEditing}>Edit note</button> : null}
-          {isEditing ? <button onClick={() => void saveDraft()}>Save</button> : null}
-          {isEditing ? <button onClick={requestExitEditMode}>View mode</button> : null}
-          <button onClick={() => void toggleAlwaysOnTop()}>
+        <div
+          className="note-context-menu"
+          style={{
+            left: menuPosition.x,
+            top: menuPosition.y,
+            right: "auto",
+            bottom: "auto",
+            transform: `translate(${menuPosition.alignX === "right" ? "-100%" : "0"}, ${
+              menuPosition.alignY === "bottom" ? "-100%" : "0"
+            })`,
+          }}
+        >
+          {!isEditing ? <button onClick={() => runMenuAction(startEditing)}>Edit note</button> : null}
+          {isEditing ? <button onClick={() => runAsyncMenuAction(saveDraft)}>Save</button> : null}
+          {isEditing ? <button onClick={() => runMenuAction(requestExitEditMode)}>View mode</button> : null}
+          <button onClick={() => runAsyncMenuAction(toggleAlwaysOnTop)}>
             {note?.alwaysOnTop ? "Disable always on top" : "Always on top"}
           </button>
-          <button onClick={() => void toggleStartup()}>
+          <button onClick={() => runAsyncMenuAction(toggleStartup)}>
             {note?.openOnStartup ? "Disable open on startup" : "Open on startup"}
           </button>
-          <button onClick={() => void togglePin()}>{note?.pinned ? "Unpin" : "Pin"}</button>
-          <button onClick={() => void openPathExternal(file?.path ?? path)}>Open in external editor</button>
-          {!isEditing ? <button onClick={() => void load()}>Refresh</button> : null}
-          {!isEditing ? <button onClick={selectNoteBody}>Select all</button> : null}
+          <button onClick={() => runAsyncMenuAction(togglePin)}>{note?.pinned ? "Unpin" : "Pin"}</button>
+          <button onClick={() => runAsyncMenuAction(() => openPathExternal(file?.path ?? path))}>Open in external editor</button>
+          {!isEditing ? <button onClick={() => runAsyncMenuAction(() => load())}>Refresh</button> : null}
+          {!isEditing ? <button onClick={() => runMenuAction(selectNoteBody)}>Select all</button> : null}
           {!isEditing ? (
-            <button onClick={() => void copySelection()}>
+            <button onClick={() => runAsyncMenuAction(copySelection)}>
               <Copy size={14} />
               Copy
             </button>
           ) : null}
-          <button onClick={() => void closeCurrentNote(file?.path ?? path)}>Close note</button>
+          <button onClick={() => runAsyncMenuAction(() => closeCurrentNote(file?.path ?? path))}>Close note</button>
           <button onClick={() => setMenuOpen(false)}>
             <Check size={14} />
             Close menu
