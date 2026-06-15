@@ -78,14 +78,24 @@ struct HotkeySettings {
     enabled: bool,
     accelerator: String,
     mode: String,
+    #[serde(default = "default_hotkey_include_taskboard")]
+    include_taskboard: bool,
+}
+
+const DEFAULT_HOTKEY_ACCELERATOR: &str = "Ctrl+Shift+F16";
+const DEFAULT_HOTKEY_MODE: &str = "toggle";
+
+fn default_hotkey_include_taskboard() -> bool {
+    true
 }
 
 impl Default for HotkeySettings {
     fn default() -> Self {
         Self {
-            enabled: false,
-            accelerator: String::new(),
-            mode: "show".into(),
+            enabled: true,
+            accelerator: DEFAULT_HOTKEY_ACCELERATOR.into(),
+            mode: DEFAULT_HOTKEY_MODE.into(),
+            include_taskboard: default_hotkey_include_taskboard(),
         }
     }
 }
@@ -94,6 +104,8 @@ impl Default for HotkeySettings {
 #[serde(rename_all = "camelCase")]
 struct AppConfig {
     default_folder: String,
+    #[serde(default = "default_taskboard_path")]
+    taskboard_path: String,
     manager_visible_on_last_quit: bool,
     note_show_in_taskbar: bool,
     windows_login_autostart: bool,
@@ -106,6 +118,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             default_folder: default_daily_note_folder(),
+            taskboard_path: default_taskboard_path(),
             manager_visible_on_last_quit: true,
             note_show_in_taskbar: false,
             windows_login_autostart: false,
@@ -199,6 +212,23 @@ fn default_daily_note_folder() -> String {
         .unwrap_or_default()
 }
 
+fn default_taskboard_path() -> String {
+    dirs::home_dir()
+        .map(|home| {
+            home.join("AppData")
+                .join("Roaming")
+                .join("Microsoft")
+                .join("Windows")
+                .join("Start Menu")
+                .join("Programs")
+                .join("Chrome 앱")
+                .join("TasksBoard.lnk")
+                .to_string_lossy()
+                .to_string()
+        })
+        .unwrap_or_default()
+}
+
 fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app
         .path()
@@ -209,11 +239,25 @@ fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 fn load_config(app: &AppHandle) -> AppConfig {
-    config_path(app)
+    let mut config = config_path(app)
         .ok()
         .and_then(|path| fs::read_to_string(path).ok())
         .and_then(|raw| serde_json::from_str::<AppConfig>(&raw).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+
+    if config.hotkey.accelerator.trim().is_empty()
+        && !config.hotkey.enabled
+        && config.hotkey.mode == "show"
+    {
+        config.hotkey = HotkeySettings::default();
+        let _ = save_config_to_disk(app, &config);
+    } else if config.hotkey.mode == "workspace" {
+        config.hotkey.mode = "toggle".into();
+        config.hotkey.include_taskboard = true;
+        let _ = save_config_to_disk(app, &config);
+    }
+
+    config
 }
 
 fn save_config_to_disk(app: &AppHandle, config: &AppConfig) -> Result<(), String> {
@@ -662,6 +706,7 @@ fn show_manager_window(app: AppHandle) -> Result<(), String> {
 mod taskboard {
     use std::{
         ffi::c_void,
+        path::PathBuf,
         ptr, thread,
         time::{Duration, Instant},
     };
@@ -724,16 +769,46 @@ mod taskboard {
         }
     }
 
-    pub fn show() {
-        let hwnd = find_window().or_else(|| {
-            let lnk = dirs::home_dir()?
-                .join("OneDrive")
-                .join("바탕 화면")
-                .join("TasksBoard.lnk");
+    fn shortcut_candidates(configured_path: Option<&str>) -> Vec<PathBuf> {
+        let mut candidates = Vec::new();
+        if let Some(path) = configured_path.map(str::trim).filter(|path| !path.is_empty()) {
+            candidates.push(PathBuf::from(path));
+        }
+        let default_path = crate::default_taskboard_path();
+        if !default_path.trim().is_empty() {
+            candidates.push(PathBuf::from(default_path));
+        }
+        if let Some(home) = dirs::home_dir() {
+            candidates.push(
+                home.join("OneDrive")
+                    .join("바탕 화면")
+                    .join("TasksBoard.lnk"),
+            );
+            candidates.push(home.join("Desktop").join("TasksBoard.lnk"));
+        }
+        candidates.into_iter().fold(Vec::new(), |mut unique, path| {
+            if !unique.iter().any(|item| item == &path) {
+                unique.push(path);
+            }
+            unique
+        })
+    }
+
+    fn launch(configured_path: Option<&str>) {
+        if let Some(lnk) = shortcut_candidates(configured_path)
+            .into_iter()
+            .find(|path| path.exists())
+        {
             let _ = std::process::Command::new("cmd")
                 .args(["/C", "start", "", &lnk.to_string_lossy()])
                 .spawn();
-            let deadline = Instant::now() + Duration::from_secs(4);
+        }
+    }
+
+    pub fn show(configured_path: Option<&str>) {
+        let hwnd = find_window().or_else(|| {
+            launch(configured_path);
+            let deadline = Instant::now() + Duration::from_secs(10);
             while Instant::now() < deadline {
                 if let Some(hwnd) = find_window() {
                     return Some(hwnd);
@@ -759,7 +834,7 @@ mod taskboard {
         false
     }
     pub fn hide() {}
-    pub fn show() {}
+    pub fn show(_configured_path: Option<&str>) {}
 }
 
 #[cfg(target_os = "windows")]
@@ -806,8 +881,8 @@ mod app_instance {
     }
 }
 
-fn toggle_workspace(app: &AppHandle, state: tauri::State<ConfigState>) {
-    let notes_visible = state
+fn has_visible_note_windows(state: &tauri::State<ConfigState>) -> bool {
+    state
         .0
         .lock()
         .map(|config| {
@@ -816,15 +891,7 @@ fn toggle_workspace(app: &AppHandle, state: tauri::State<ConfigState>) {
                 .iter()
                 .any(|note| note.was_open_last_session && !note.hidden)
         })
-        .unwrap_or(false);
-
-    if notes_visible || taskboard::is_visible() {
-        let _ = hide_note_windows(app.clone(), state);
-        taskboard::hide();
-    } else {
-        taskboard::show();
-        let _ = show_note_windows(app.clone(), state);
-    }
+        .unwrap_or(false)
 }
 
 #[tauri::command]
@@ -840,31 +907,30 @@ fn get_restore_note_paths(state: tauri::State<ConfigState>) -> Result<Vec<String
 
 fn apply_hotkey_behavior(app: &AppHandle) {
     let state = app.state::<ConfigState>();
-    let mode = state
+    let (hotkey, taskboard_path) = state
         .0
         .lock()
-        .map(|config| config.hotkey.mode.clone())
-        .unwrap_or_else(|_| "show".to_string());
+        .map(|config| (config.hotkey.clone(), config.taskboard_path.clone()))
+        .unwrap_or_else(|_| (HotkeySettings::default(), default_taskboard_path()));
 
-    if mode == "workspace" {
-        toggle_workspace(app, state.clone());
-    } else if mode == "toggle" {
-        let should_hide = state
-            .0
-            .lock()
-            .map(|config| {
-                config
-                    .notes
-                    .iter()
-                    .any(|note| note.was_open_last_session && !note.hidden)
-            })
-            .unwrap_or(false);
+    if hotkey.mode == "toggle" {
+        let should_hide =
+            has_visible_note_windows(&state) || (hotkey.include_taskboard && taskboard::is_visible());
         if should_hide {
             let _ = hide_note_windows(app.clone(), state.clone());
+            if hotkey.include_taskboard {
+                taskboard::hide();
+            }
         } else {
+            if hotkey.include_taskboard {
+                taskboard::show(Some(&taskboard_path));
+            }
             let _ = show_note_windows(app.clone(), state.clone());
         }
     } else {
+        if hotkey.include_taskboard {
+            taskboard::show(Some(&taskboard_path));
+        }
         let _ = show_note_windows(app.clone(), state.clone());
     }
 }
@@ -1033,18 +1099,21 @@ fn restore_startup_windows(app: &AppHandle) {
         let _ = manager.hide();
     }
     let state = app.state::<ConfigState>();
-    let has_restore_notes = state
+    let (has_restore_notes, taskboard_path) = state
         .0
         .lock()
         .map(|config| {
-            config
-                .notes
-                .iter()
-                .any(|note| note.was_open_last_session || note.open_on_startup)
+            (
+                config
+                    .notes
+                    .iter()
+                    .any(|note| note.was_open_last_session || note.open_on_startup),
+                config.taskboard_path.clone(),
+            )
         })
-        .unwrap_or(false);
+        .unwrap_or_else(|_| (false, default_taskboard_path()));
     if has_restore_notes {
-        taskboard::show();
+        taskboard::show(Some(&taskboard_path));
         let _ = show_note_windows(app.clone(), state);
     }
 }

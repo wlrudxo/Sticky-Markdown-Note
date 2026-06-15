@@ -53,6 +53,8 @@ const fallbackTheme: ThemeSettings = {
   opacity: 1,
 };
 
+const EDIT_AUTO_SAVE_DELAY_MS = 1500;
+
 type ContextMenuPosition = {
   x: number;
   y: number;
@@ -379,6 +381,13 @@ function SettingsDialog({
             onChange={(event) => setDraft({ ...draft, defaultFolder: event.target.value })}
           />
         </label>
+        <label>
+          Taskboard path
+          <input
+            value={draft.taskboardPath}
+            onChange={(event) => setDraft({ ...draft, taskboardPath: event.target.value })}
+          />
+        </label>
         <label className="checkbox-row">
           <input
             type="checkbox"
@@ -469,8 +478,17 @@ function SettingsDialog({
             >
               <option value="show">Bring notes to front</option>
               <option value="toggle">Toggle notes</option>
-              <option value="workspace">Toggle workspace</option>
             </select>
+          </label>
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={draft.hotkey.includeTaskboard}
+              onChange={(event) =>
+                setDraft({ ...draft, hotkey: { ...draft.hotkey, includeTaskboard: event.target.checked } })
+              }
+            />
+            Include taskboard
           </label>
         </div>
         <footer>
@@ -680,6 +698,16 @@ function NoteWindow({ path }: { path: string }) {
   }, [editBlocked, forceNextSave, hasDraftChanges, isEditing]);
 
   useEffect(() => {
+    if (!isEditing || !hasDraftChanges || forceNextSave || editBlocked || !editBase) return;
+
+    const timer = window.setTimeout(() => {
+      void saveDraft({ exitIfUnfocused: true, silent: true });
+    }, EDIT_AUTO_SAVE_DELAY_MS);
+
+    return () => window.clearTimeout(timer);
+  }, [draftContent, editBase, editBlocked, forceNextSave, hasDraftChanges, isEditing]);
+
+  useEffect(() => {
     if (!isEditing) return;
     requestAnimationFrame(() => {
       editorRef.current?.focus();
@@ -739,7 +767,7 @@ function NoteWindow({ path }: { path: string }) {
     setIsEditing(true);
   }
 
-  async function saveDraft() {
+  async function saveDraft(options: { exitIfUnfocused?: boolean; silent?: boolean } = {}) {
     if (!isEditing || !editBase) return;
     try {
       const result = await saveMarkdownFile({
@@ -762,7 +790,10 @@ function NoteWindow({ path }: { path: string }) {
       setExternalConflict(null);
       acknowledgedConflictKey.current = null;
       setConfig(await getConfig());
-      showStatus("Saved");
+      showStatus(options.silent ? "Autosaved" : "Saved");
+      if (options.exitIfUnfocused && document.activeElement !== editorRef.current) {
+        exitEditMode();
+      }
     } catch (cause) {
       setError(String(cause));
     }

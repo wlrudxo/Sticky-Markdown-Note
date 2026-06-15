@@ -39,11 +39,13 @@ export type NoteRecord = {
 export type HotkeySettings = {
   enabled: boolean;
   accelerator: string;
-  mode: "show" | "toggle" | "workspace" | string;
+  mode: "show" | "toggle" | string;
+  includeTaskboard: boolean;
 };
 
 export type AppConfig = {
   defaultFolder: string;
+  taskboardPath: string;
   managerVisibleOnLastQuit: boolean;
   noteShowInTaskbar: boolean;
   windowsLoginAutostart: boolean;
