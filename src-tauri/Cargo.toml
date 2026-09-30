@@ -7,7 +7,14 @@ edition = "2021"
 
 [lib]
 name = "sticky_markdown_note_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# Desktop(Windows)만 빌드하므로 rlib 하나면 충분.
+# 안드로이드/iOS 빌드를 다시 할 경우 "staticlib", "cdylib" 를 되살릴 것.
+crate-type = ["lib"]
+
+# dev 빌드 시 디버그 심볼 생성을 끄면 컴파일/링크가 눈에 띄게 빨라짐.
+# (디버거로 스택 추적할 일이 생기면 이 줄을 지우거나 debug = true 로)
+[profile.dev]
+debug = 0
 
 [build-dependencies]
 tauri-build = { version = "2.4.0", features = [] }

@@ -597,15 +597,37 @@ fn prepare_note_window_spec(
     Ok(spec)
 }
 
+/// Reliably lift a note window to the front from the background tray process.
+///
+/// `WebviewWindow::show()` makes a hidden window visible but does NOT change its
+/// z-order, so a note buried behind other apps stays buried. And from a process
+/// that is not the foreground, `set_focus()` (SetForegroundWindow) is unreliable
+/// because of Windows' foreground lock. Toggling always-on-top instead goes through
+/// SetWindowPos(HWND_TOPMOST), which is not subject to that lock, so it
+/// deterministically raises the window. When the note is not pinned we drop it back
+/// out of the topmost band immediately, leaving it on top of the normal windows
+/// without permanently pinning it.
+fn bring_note_to_front(window: &tauri::WebviewWindow, keep_on_top: bool) {
+    let _ = window.unminimize();
+    let _ = window.set_always_on_top(true);
+    if !keep_on_top {
+        let _ = window.set_always_on_top(false);
+    }
+}
+
 fn open_note_window(
     app: &AppHandle,
     state: &tauri::State<ConfigState>,
     path: String,
+    focus: bool,
 ) -> Result<(), String> {
     let spec = prepare_note_window_spec(app, state, path)?;
     if let Some(window) = app.get_webview_window(&spec.label) {
         window.show().map_err(|error| error.to_string())?;
-        window.set_focus().map_err(|error| error.to_string())?;
+        bring_note_to_front(&window, spec.always_on_top);
+        if focus {
+            window.set_focus().map_err(|error| error.to_string())?;
+        }
         return Ok(());
     }
 
@@ -618,7 +640,7 @@ fn open_note_window(
             .resizable(true)
             .decorations(false)
             .visible(true)
-            .focused(true)
+            .focused(focus)
             .devtools(false)
             .always_on_top(spec.always_on_top)
             .skip_taskbar(spec.skip_taskbar);
@@ -627,7 +649,8 @@ fn open_note_window(
         builder = builder.position(x as f64, y as f64);
     }
 
-    builder.build().map_err(|error| error.to_string())?;
+    let window = builder.build().map_err(|error| error.to_string())?;
+    bring_note_to_front(&window, spec.always_on_top);
     Ok(())
 }
 
@@ -661,6 +684,17 @@ fn hide_note_windows(app: AppHandle, state: tauri::State<ConfigState>) -> Result
 
 #[tauri::command]
 fn show_note_windows(app: AppHandle, state: tauri::State<ConfigState>) -> Result<(), String> {
+    show_note_windows_inner(&app, &state, true)
+}
+
+/// Show all restorable note windows. When `focus` is false the windows are made
+/// visible without stealing the foreground, so a later `taskboard::raise()` can
+/// deterministically land on top.
+fn show_note_windows_inner(
+    app: &AppHandle,
+    state: &tauri::State<ConfigState>,
+    focus: bool,
+) -> Result<(), String> {
     let notes = {
         let config = state.0.lock().map_err(|error| error.to_string())?;
         config.notes.clone()
@@ -674,11 +708,13 @@ fn show_note_windows(app: AppHandle, state: tauri::State<ConfigState>) -> Result
     if paths.is_empty() {
         if let Some(manager) = app.get_webview_window("manager") {
             let _ = manager.show();
-            let _ = manager.set_focus();
+            if focus {
+                let _ = manager.set_focus();
+            }
         }
     } else {
         for path in &paths {
-            let _ = open_note_window(&app, &state, path.clone());
+            let _ = open_note_window(app, state, path.clone(), focus);
         }
     }
 
@@ -688,7 +724,7 @@ fn show_note_windows(app: AppHandle, state: tauri::State<ConfigState>) -> Result
             note.hidden = false;
         }
     }
-    save_config_to_disk(&app, &config)
+    save_config_to_disk(app, &config)
 }
 
 #[tauri::command]
@@ -724,11 +760,55 @@ mod taskboard {
         fn IsWindowVisible(hwnd: Hwnd) -> Bool;
         fn ShowWindow(hwnd: Hwnd, command: i32) -> Bool;
         fn SetForegroundWindow(hwnd: Hwnd) -> Bool;
+        fn GetForegroundWindow() -> Hwnd;
+        fn GetWindowThreadProcessId(hwnd: Hwnd, pid: *mut u32) -> u32;
+        fn AttachThreadInput(id_attach: u32, id_attach_to: u32, attach: Bool) -> Bool;
+        fn BringWindowToTop(hwnd: Hwnd) -> Bool;
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetCurrentThreadId() -> u32;
     }
 
     const SW_HIDE: i32 = 0;
     const SW_SHOW: i32 = 5;
     const SW_RESTORE: i32 = 9;
+
+    /// Bring an external window reliably to the foreground, defeating Windows'
+    /// foreground-lock by temporarily attaching this thread's input queue to
+    /// both the current foreground thread and the target window's thread.
+    unsafe fn force_foreground(hwnd: Hwnd) {
+        ShowWindow(hwnd, SW_RESTORE);
+
+        let foreground = GetForegroundWindow();
+        let this_thread = GetCurrentThreadId();
+        let target_thread = GetWindowThreadProcessId(hwnd, ptr::null_mut());
+        let foreground_thread = if foreground.is_null() {
+            0
+        } else {
+            GetWindowThreadProcessId(foreground, ptr::null_mut())
+        };
+
+        let attach = target_thread != 0 && target_thread != this_thread;
+        if attach {
+            AttachThreadInput(this_thread, target_thread, 1);
+            if foreground_thread != 0 && foreground_thread != target_thread {
+                AttachThreadInput(foreground_thread, target_thread, 1);
+            }
+        }
+
+        BringWindowToTop(hwnd);
+        SetForegroundWindow(hwnd);
+        ShowWindow(hwnd, SW_SHOW);
+
+        if attach {
+            if foreground_thread != 0 && foreground_thread != target_thread {
+                AttachThreadInput(foreground_thread, target_thread, 0);
+            }
+            AttachThreadInput(this_thread, target_thread, 0);
+        }
+    }
 
     unsafe extern "system" fn enum_taskboard(hwnd: Hwnd, lparam: Lparam) -> Bool {
         let mut buffer = [0u16; 512];
@@ -805,7 +885,10 @@ mod taskboard {
         }
     }
 
-    pub fn show(configured_path: Option<&str>) {
+    /// Make sure the taskboard window exists and is un-minimized, WITHOUT
+    /// stealing the foreground. Launches the app and waits if it is not running
+    /// yet. Returns true once a window is available.
+    pub fn restore(configured_path: Option<&str>) -> bool {
         let hwnd = find_window().or_else(|| {
             launch(configured_path);
             let deadline = Instant::now() + Duration::from_secs(10);
@@ -822,7 +905,19 @@ mod taskboard {
             unsafe {
                 ShowWindow(hwnd, SW_RESTORE);
                 ShowWindow(hwnd, SW_SHOW);
-                SetForegroundWindow(hwnd);
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Raise the (already-restored) taskboard window to the foreground.
+    /// Call this LAST so it ends up on top of the note windows.
+    pub fn raise() {
+        if let Some(hwnd) = find_window() {
+            unsafe {
+                force_foreground(hwnd);
             }
         }
     }
@@ -834,7 +929,10 @@ mod taskboard {
         false
     }
     pub fn hide() {}
-    pub fn show(_configured_path: Option<&str>) {}
+    pub fn restore(_configured_path: Option<&str>) -> bool {
+        false
+    }
+    pub fn raise() {}
 }
 
 #[cfg(target_os = "windows")]
@@ -905,6 +1003,30 @@ fn get_restore_note_paths(state: tauri::State<ConfigState>) -> Result<Vec<String
         .collect())
 }
 
+/// Bring the whole workspace into view with a single, deterministic stacking
+/// order: note windows are shown first WITHOUT focus, then the taskboard is
+/// restored and raised LAST so it reliably lands on top. When the taskboard is
+/// not part of the workspace, the note windows take the focus instead.
+fn present_workspace(
+    app: &AppHandle,
+    state: &tauri::State<ConfigState>,
+    include_taskboard: bool,
+    taskboard_path: &str,
+) {
+    if include_taskboard {
+        // 1. Show notes without stealing the foreground.
+        let _ = show_note_windows_inner(app, state, false);
+        // 2. Un-minimize the taskboard (still no foreground change).
+        let restored = taskboard::restore(Some(taskboard_path));
+        // 3. Raise the taskboard to the top as the final, single foreground op.
+        if restored {
+            taskboard::raise();
+        }
+    } else {
+        let _ = show_note_windows_inner(app, state, true);
+    }
+}
+
 fn apply_hotkey_behavior(app: &AppHandle) {
     let state = app.state::<ConfigState>();
     let (hotkey, taskboard_path) = state
@@ -922,16 +1044,10 @@ fn apply_hotkey_behavior(app: &AppHandle) {
                 taskboard::hide();
             }
         } else {
-            if hotkey.include_taskboard {
-                taskboard::show(Some(&taskboard_path));
-            }
-            let _ = show_note_windows(app.clone(), state.clone());
+            present_workspace(app, &state, hotkey.include_taskboard, &taskboard_path);
         }
     } else {
-        if hotkey.include_taskboard {
-            taskboard::show(Some(&taskboard_path));
-        }
-        let _ = show_note_windows(app.clone(), state.clone());
+        present_workspace(app, &state, hotkey.include_taskboard, &taskboard_path);
     }
 }
 
@@ -1113,8 +1229,7 @@ fn restore_startup_windows(app: &AppHandle) {
         })
         .unwrap_or_else(|_| (false, default_taskboard_path()));
     if has_restore_notes {
-        taskboard::show(Some(&taskboard_path));
-        let _ = show_note_windows(app.clone(), state);
+        present_workspace(app, &state, true, &taskboard_path);
     }
 }
 

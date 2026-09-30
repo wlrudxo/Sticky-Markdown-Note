@@ -4,7 +4,6 @@ import {
   ArrowDownToLine,
   Check,
   Copy,
-  Edit3,
   Eye,
   EyeOff,
   FilePlus2,
@@ -19,8 +18,6 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import {
   chooseMarkdownFile,
   chooseNewMarkdownPath,
@@ -74,6 +71,17 @@ function formatTime(value?: number | null) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value));
+}
+
+function formatEditorTimestamp(date = new Date()) {
+  const period = date.getHours() < 12 ? "오전" : "오후";
+  const hour = date.getHours() % 12 || 12;
+  const minute = String(date.getMinutes()).padStart(2, "0");
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const weekday = ["일", "월", "화", "수", "목", "금", "토"][date.getDay()];
+  return `${period} ${hour}:${minute} ${year}년 ${month}월 ${day}일 ${weekday}요일`;
 }
 
 function pathBaseName(path: string) {
@@ -507,13 +515,10 @@ function SettingsDialog({
 function NoteWindow({ path }: { path: string }) {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [file, setFile] = useState<FileReadResult | null>(null);
-  const [lastGoodContent, setLastGoodContent] = useState("");
-  const [isEditing, setIsEditing] = useState(false);
   const [draftContent, setDraftContent] = useState("");
   const [editBase, setEditBase] = useState<FileReadResult | null>(null);
   const [externalConflict, setExternalConflict] = useState<FileReadResult | null>(null);
   const [forceNextSave, setForceNextSave] = useState(false);
-  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const [focused, setFocused] = useState(true);
@@ -525,28 +530,57 @@ function NoteWindow({ path }: { path: string }) {
     alignY: "top",
   });
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
-  const contentRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const statusTimer = useRef<number | null>(null);
   const acknowledgedConflictKey = useRef<string | null>(null);
-  const pendingScrollRatio = useRef<number | null>(null);
+  const savingRef = useRef(false);
+  const fileRef = useRef<FileReadResult | null>(null);
+  const draftContentRef = useRef("");
+  const editBaseRef = useRef<FileReadResult | null>(null);
+  const forceNextSaveRef = useRef(false);
+  const hasLoadedOnceRef = useRef(false);
+
+  fileRef.current = file;
+  draftContentRef.current = draftContent;
+  editBaseRef.current = editBase;
+  forceNextSaveRef.current = forceNextSave;
+  hasLoadedOnceRef.current = hasLoadedOnce;
 
   const note = config?.notes.find((item) => item.path === (file?.path ?? path));
   const theme = config?.theme ?? fallbackTheme;
-  const content = file?.content ?? lastGoodContent;
-  const hasDraftChanges = isEditing && draftContent !== (file?.content ?? lastGoodContent);
-  const externalOverwritePending = isEditing && forceNextSave;
-  const editBlocked = Boolean(externalConflict || discardConfirmOpen);
+  const hasDraftChanges = Boolean(editBase && draftContent !== editBase.content);
+  const externalOverwritePending = forceNextSave;
+  const editBlocked = Boolean(externalConflict);
+  const unsupportedEncoding = Boolean(file && file.encoding !== "utf-8");
 
   const load = useCallback(
     async (silent = false) => {
-      if (isEditing) return;
       try {
-        const before = contentRef.current;
+        const before = editorRef.current;
         const nearBottom = before ? before.scrollHeight - before.scrollTop - before.clientHeight < 96 : true;
         const result = await readMarkdownFile(path);
+        const currentBase = editBaseRef.current;
+        const currentFile = fileRef.current;
+        const localChanges = Boolean(
+          currentBase && (draftContentRef.current !== currentBase.content || forceNextSaveRef.current),
+        );
+        const changed = result.modifiedMs !== currentFile?.modifiedMs || result.size !== currentFile?.size;
+        if (hasLoadedOnceRef.current && changed && localChanges) {
+          setExternalConflict(result);
+          setError("");
+          return;
+        }
+        fileRef.current = result;
+        draftContentRef.current = result.content;
+        editBaseRef.current = result;
+        forceNextSaveRef.current = false;
+        hasLoadedOnceRef.current = true;
         setFile(result);
-        setLastGoodContent(result.content);
+        setDraftContent(result.content);
+        setEditBase(result);
+        setForceNextSave(false);
+        setExternalConflict(null);
+        acknowledgedConflictKey.current = null;
         setHasLoadedOnce(true);
         setError("");
         setConfig(await getConfig());
@@ -554,17 +588,17 @@ function NoteWindow({ path }: { path: string }) {
           showStatus("Updated");
         }
         requestAnimationFrame(() => {
-          const contentNode = contentRef.current;
-          if (!contentNode) return;
+          const editor = editorRef.current;
+          if (!editor) return;
           if (nearBottom) {
-            contentNode.scrollTop = contentNode.scrollHeight;
+            editor.scrollTop = editor.scrollHeight;
           }
         });
       } catch (cause) {
         setError(String(cause));
       }
     },
-    [isEditing, path],
+    [path],
   );
 
   function showStatus(message: string) {
@@ -582,9 +616,14 @@ function NoteWindow({ path }: { path: string }) {
     const timer = window.setInterval(() => {
       void readMarkdownFile(path)
         .then((result) => {
-          const changed = result.modifiedMs !== file?.modifiedMs || result.size !== file?.size;
+          const currentFile = fileRef.current;
+          const currentBase = editBaseRef.current;
+          const changed = result.modifiedMs !== currentFile?.modifiedMs || result.size !== currentFile?.size;
           const conflictKey = `${result.modifiedMs ?? "none"}:${result.size ?? "none"}`;
-          if (changed && isEditing) {
+          const localChanges = Boolean(
+            currentBase && (draftContentRef.current !== currentBase.content || forceNextSaveRef.current),
+          );
+          if (changed && localChanges) {
             if (conflictKey !== acknowledgedConflictKey.current) {
               setExternalConflict(result);
               setError("");
@@ -592,15 +631,23 @@ function NoteWindow({ path }: { path: string }) {
             return;
           }
           if (changed) {
+            const editor = editorRef.current;
+            const nearBottom = editor ? editor.scrollHeight - editor.scrollTop - editor.clientHeight < 140 : true;
+            fileRef.current = result;
+            draftContentRef.current = result.content;
+            editBaseRef.current = result;
+            forceNextSaveRef.current = false;
             setFile(result);
-            setLastGoodContent(result.content);
+            setDraftContent(result.content);
+            setEditBase(result);
+            setForceNextSave(false);
+            setExternalConflict(null);
+            acknowledgedConflictKey.current = null;
             setError("");
-            setConfig((current) => current);
             showStatus("Updated");
-            const node = contentRef.current;
-            if (node && node.scrollHeight - node.scrollTop - node.clientHeight < 140) {
+            if (nearBottom) {
               requestAnimationFrame(() => {
-                node.scrollTop = node.scrollHeight;
+                if (editorRef.current) editorRef.current.scrollTop = editorRef.current.scrollHeight;
               });
             }
           }
@@ -608,7 +655,7 @@ function NoteWindow({ path }: { path: string }) {
         .catch((cause) => setError(String(cause)));
     }, 1200);
     return () => window.clearInterval(timer);
-  }, [file?.modifiedMs, file?.size, isEditing, path]);
+  }, [path]);
 
   useEffect(() => {
     if (!isTauri) return;
@@ -627,7 +674,7 @@ function NoteWindow({ path }: { path: string }) {
             width: size.width,
             height: size.height,
           },
-          scrollTop: contentRef.current?.scrollTop ?? 0,
+          scrollTop: editorRef.current?.scrollTop ?? 0,
         });
       } catch {
         // Position persistence is best effort while dragging/resizing.
@@ -642,29 +689,37 @@ function NoteWindow({ path }: { path: string }) {
         if (event.ctrlKey && event.key.toLowerCase() === "s") event.preventDefault();
         return;
       }
-      if (isEditing && event.ctrlKey && event.key.toLowerCase() === "s") {
+      if (event.ctrlKey && event.key.toLowerCase() === "s") {
         event.preventDefault();
         void saveDraft();
         return;
       }
-      if (isEditing && event.key === "Escape") {
+      if (event.key === "F5" && !unsupportedEncoding) {
         event.preventDefault();
-        requestExitEditMode();
+        const editor = editorRef.current;
+        if (!editor) return;
+        const start = editor.selectionStart;
+        const end = editor.selectionEnd;
+        const timestamp = formatEditorTimestamp();
+        setDraftContent((current) => {
+          const next = `${current.slice(0, start)}${timestamp}${current.slice(end)}`;
+          draftContentRef.current = next;
+          return next;
+        });
+        requestAnimationFrame(() => {
+          const caret = start + timestamp.length;
+          editor.focus();
+          editor.setSelectionRange(caret, caret);
+        });
         return;
       }
-      if (!isEditing && event.key === "Escape") {
+      if (event.key === "Escape") {
         setMenuOpen(false);
-        return;
-      }
-      if (isEditing) return;
-      if (event.ctrlKey && event.key.toLowerCase() === "a") {
-        event.preventDefault();
-        selectNoteBody();
       }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [draftContent, editBase, editBlocked, file, forceNextSave, isEditing, lastGoodContent]);
+  }, [draftContent, editBase, editBlocked, file, forceNextSave, unsupportedEncoding]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -688,149 +743,87 @@ function NoteWindow({ path }: { path: string }) {
   }, [menuOpen]);
 
   useEffect(() => {
-    function returnToViewModeOnWindowBlur() {
-      if (!isEditing || hasDraftChanges || forceNextSave || editBlocked) return;
-      exitEditMode();
-    }
-
-    window.addEventListener("blur", returnToViewModeOnWindowBlur);
-    return () => window.removeEventListener("blur", returnToViewModeOnWindowBlur);
-  }, [editBlocked, forceNextSave, hasDraftChanges, isEditing]);
-
-  useEffect(() => {
-    if (!isEditing || !hasDraftChanges || forceNextSave || editBlocked || !editBase) return;
+    if (!hasDraftChanges || forceNextSave || editBlocked || unsupportedEncoding || !editBase) return;
 
     const timer = window.setTimeout(() => {
-      void saveDraft({ exitIfUnfocused: true, silent: true });
+      void saveDraft({ silent: true });
     }, EDIT_AUTO_SAVE_DELAY_MS);
 
     return () => window.clearTimeout(timer);
-  }, [draftContent, editBase, editBlocked, forceNextSave, hasDraftChanges, isEditing]);
+  }, [draftContent, editBase, editBlocked, forceNextSave, hasDraftChanges, unsupportedEncoding]);
 
   useEffect(() => {
-    if (!isEditing) return;
+    if (!hasLoadedOnce) return;
     requestAnimationFrame(() => {
       editorRef.current?.focus();
-      restorePendingScroll(editorRef.current, false);
-      requestAnimationFrame(() => restorePendingScroll(editorRef.current));
     });
-  }, [isEditing]);
+  }, [hasLoadedOnce]);
 
   function selectNoteBody() {
-    const node = contentRef.current;
-    if (!node) return;
-    const range = document.createRange();
-    range.selectNodeContents(node);
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(range);
+    editorRef.current?.select();
+    editorRef.current?.focus();
   }
 
   async function copySelection() {
-    const selected = window.getSelection()?.toString() ?? "";
+    const editor = editorRef.current;
+    const selected = editor?.value.slice(editor.selectionStart, editor.selectionEnd) ?? "";
     if (selected) {
       await navigator.clipboard.writeText(selected);
       showStatus("Copied");
     }
   }
 
-  function getScrollRatio(node: HTMLElement | null) {
-    if (!node) return 0;
-    const maxScrollTop = node.scrollHeight - node.clientHeight;
-    if (maxScrollTop <= 0) return 0;
-    return node.scrollTop / maxScrollTop;
-  }
-
-  function restorePendingScroll(node: HTMLElement | null, clear = true) {
-    const ratio = pendingScrollRatio.current;
-    if (ratio === null || !node) return;
-    const maxScrollTop = node.scrollHeight - node.clientHeight;
-    node.scrollTop = maxScrollTop > 0 ? maxScrollTop * ratio : 0;
-    if (clear) pendingScrollRatio.current = null;
-  }
-
-  function startEditing() {
-    const current = file;
-    if (!current) return;
-    if (current.encoding !== "utf-8") {
-      setError("이 파일은 UTF-8이 아니라 내장 편집을 지원하지 않습니다. 외부 에디터를 사용하세요.");
-      return;
-    }
-    setMenuOpen(false);
-    setError("");
-    setDraftContent(current.content);
-    setEditBase(current);
-    setExternalConflict(null);
-    setForceNextSave(false);
-    acknowledgedConflictKey.current = null;
-    pendingScrollRatio.current = getScrollRatio(contentRef.current);
-    setIsEditing(true);
-  }
-
-  async function saveDraft(options: { exitIfUnfocused?: boolean; silent?: boolean } = {}) {
-    if (!isEditing || !editBase) return;
+  async function saveDraft(options: { silent?: boolean } = {}) {
+    const base = editBaseRef.current;
+    const contentToSave = draftContentRef.current;
+    const shouldForce = forceNextSaveRef.current;
+    if (!base || editBlocked || unsupportedEncoding || savingRef.current) return false;
+    if (contentToSave === base.content && !shouldForce) return true;
+    savingRef.current = true;
     try {
       const result = await saveMarkdownFile({
-        path: file?.path ?? path,
-        content: draftContent,
-        baseModifiedMs: editBase.modifiedMs,
-        baseSize: editBase.size,
-        force: forceNextSave,
+        path: fileRef.current?.path ?? path,
+        content: contentToSave,
+        baseModifiedMs: base.modifiedMs,
+        baseSize: base.size,
+        force: shouldForce,
       });
       if (result.status === "conflict") {
         setExternalConflict(result.file);
         acknowledgedConflictKey.current = null;
-        return;
+        return false;
       }
+      const hasNewerInput = draftContentRef.current !== contentToSave;
+      fileRef.current = result.file;
+      editBaseRef.current = result.file;
+      forceNextSaveRef.current = false;
       setFile(result.file);
-      setLastGoodContent(result.file.content);
-      setDraftContent(result.file.content);
+      if (!hasNewerInput) {
+        draftContentRef.current = result.file.content;
+        setDraftContent(result.file.content);
+      }
       setEditBase(result.file);
       setForceNextSave(false);
       setExternalConflict(null);
       acknowledgedConflictKey.current = null;
       setConfig(await getConfig());
       showStatus(options.silent ? "Autosaved" : "Saved");
-      if (options.exitIfUnfocused && document.activeElement !== editorRef.current) {
-        exitEditMode();
-      }
+      return true;
     } catch (cause) {
       setError(String(cause));
+      return false;
+    } finally {
+      savingRef.current = false;
     }
-  }
-
-  function requestExitEditMode() {
-    if (hasDraftChanges || forceNextSave) {
-      setDiscardConfirmOpen(true);
-      return;
-    }
-    exitEditMode();
-  }
-
-  function exitEditMode() {
-    pendingScrollRatio.current = getScrollRatio(editorRef.current);
-    setIsEditing(false);
-    setDraftContent("");
-    setEditBase(null);
-    setExternalConflict(null);
-    setForceNextSave(false);
-    setDiscardConfirmOpen(false);
-    acknowledgedConflictKey.current = null;
-  }
-
-  useEffect(() => {
-    if (isEditing) return;
-    requestAnimationFrame(() => restorePendingScroll(contentRef.current));
-  }, [isEditing]);
-
-  function discardDraft() {
-    setDraftContent(file?.content ?? lastGoodContent);
-    exitEditMode();
   }
 
   function keepLocalDraft() {
     if (!externalConflict) return;
     acknowledgedConflictKey.current = `${externalConflict.modifiedMs ?? "none"}:${externalConflict.size ?? "none"}`;
+    fileRef.current = externalConflict;
+    editBaseRef.current = externalConflict;
+    forceNextSaveRef.current = true;
+    setFile(externalConflict);
     setEditBase(externalConflict);
     setForceNextSave(true);
     setExternalConflict(null);
@@ -840,8 +833,11 @@ function NoteWindow({ path }: { path: string }) {
 
   function applyExternalChange() {
     if (!externalConflict) return;
+    fileRef.current = externalConflict;
+    draftContentRef.current = externalConflict.content;
+    editBaseRef.current = externalConflict;
+    forceNextSaveRef.current = false;
     setFile(externalConflict);
-    setLastGoodContent(externalConflict.content);
     setDraftContent(externalConflict.content);
     setEditBase(externalConflict);
     setForceNextSave(false);
@@ -873,20 +869,6 @@ function NoteWindow({ path }: { path: string }) {
     setConfig(saved);
   }
 
-  function handleLink(event: React.MouseEvent<HTMLAnchorElement>, href?: string) {
-    if (!href) return;
-    if (!event.ctrlKey) {
-      event.preventDefault();
-      return;
-    }
-  }
-
-  function handleContentDoubleClick(event: React.MouseEvent<HTMLElement>) {
-    const target = event.target as HTMLElement | null;
-    if (target?.closest("a, button, input, textarea, select")) return;
-    startEditing();
-  }
-
   function startWindowDrag(event: React.MouseEvent<HTMLElement>) {
     if (!isTauri || event.button !== 0) return;
     void getCurrentWindow().startDragging();
@@ -914,6 +896,11 @@ function NoteWindow({ path }: { path: string }) {
     void action();
   }
 
+  async function closeNote() {
+    if ((hasDraftChanges || forceNextSave) && !(await saveDraft())) return;
+    await closeCurrentNote(file?.path ?? path);
+  }
+
   return (
     <main
       className={`note-shell ${focused ? "is-focused" : ""}`}
@@ -931,23 +918,12 @@ function NoteWindow({ path }: { path: string }) {
         <span data-tauri-drag-region>{pathBaseName(file?.path ?? path)}</span>
       </div>
       <div className="note-toolbar" aria-hidden={!focused}>
-        {isEditing ? (
-          <button className="note-view-mode-button" title="View mode" onClick={requestExitEditMode}>
-            <Check size={15} />
-          </button>
-        ) : null}
         <button title="Open manager" onClick={() => void showManagerWindow()}>
           <LayoutDashboard size={15} />
         </button>
-        {isEditing ? (
-          <button title="Save" onClick={() => void saveDraft()}>
-            <Save size={15} />
-          </button>
-        ) : (
-          <button title="Edit note" onClick={startEditing}>
-            <Edit3 size={15} />
-          </button>
-        )}
+        <button title="Save" onClick={() => void saveDraft()}>
+          <Save size={15} />
+        </button>
         <button title="Pin" onClick={() => void togglePin()}>
           {note?.pinned ? <PinOff size={15} /> : <Pin size={15} />}
         </button>
@@ -957,56 +933,40 @@ function NoteWindow({ path }: { path: string }) {
         <button title="Always on top" onClick={() => void toggleAlwaysOnTop()}>
           <Star size={15} fill={note?.alwaysOnTop ? "currentColor" : "none"} />
         </button>
-        {!isEditing ? (
-          <>
-            <button title="Refresh" onClick={() => void load()}>
-              <RefreshCw size={15} />
-            </button>
-            <button
-              title="Go to bottom"
-              onClick={() => {
-                if (contentRef.current) contentRef.current.scrollTop = contentRef.current.scrollHeight;
-              }}
-            >
-              <ArrowDownToLine size={15} />
-            </button>
-          </>
-        ) : null}
-        <button title="Close note" onClick={() => void closeCurrentNote(file?.path ?? path)}>
+        <button title="Refresh" onClick={() => void load()}>
+          <RefreshCw size={15} />
+        </button>
+        <button
+          title="Go to bottom"
+          onClick={() => {
+            if (editorRef.current) editorRef.current.scrollTop = editorRef.current.scrollHeight;
+          }}
+        >
+          <ArrowDownToLine size={15} />
+        </button>
+        <button title="Close note" onClick={() => void closeNote()}>
           <X size={15} />
         </button>
       </div>
       {error ? <div className="note-banner">{error}</div> : null}
+      {unsupportedEncoding && !error ? (
+        <div className="note-banner">UTF-8이 아닌 파일은 내용 보호를 위해 읽기 전용으로 표시됩니다.</div>
+      ) : null}
       {externalOverwritePending ? <div className="note-edit-warning">External change will be overwritten</div> : null}
       {status ? <div className="note-status">{status}</div> : null}
-      {isEditing ? (
-        <textarea
-          ref={editorRef}
-          className="note-editor"
-          value={draftContent}
-          readOnly={editBlocked}
-          spellCheck={false}
-          onChange={(event) => setDraftContent(event.target.value)}
-        />
-      ) : (
-        <article ref={contentRef} className="note-content" onDoubleClick={handleContentDoubleClick}>
-          {!hasLoadedOnce && !error ? <p className="empty-body">Loading {pathBaseName(path)}...</p> : null}
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={{
-              a: ({ href, children }) => (
-                <a href={href} title="Ctrl+Click to open" onClick={(event) => handleLink(event, href)}>
-                  {children}
-                </a>
-              ),
-              li: ({ children, className }) => <li className={className}>{children}</li>,
-            }}
-          >
-            {content}
-          </ReactMarkdown>
-          {hasLoadedOnce && !content.trim() ? <p className="empty-body">Empty note</p> : null}
-        </article>
-      )}
+      <textarea
+        ref={editorRef}
+        className="note-editor"
+        value={draftContent}
+        readOnly={editBlocked || unsupportedEncoding}
+        aria-label={pathBaseName(file?.path ?? path)}
+        placeholder={!hasLoadedOnce && !error ? `Loading ${pathBaseName(path)}...` : ""}
+        spellCheck={false}
+        onChange={(event) => {
+          draftContentRef.current = event.target.value;
+          setDraftContent(event.target.value);
+        }}
+      />
       <div className="resize-grip" aria-hidden />
       {menuOpen ? (
         <div
@@ -1021,9 +981,7 @@ function NoteWindow({ path }: { path: string }) {
             })`,
           }}
         >
-          {!isEditing ? <button onClick={() => runMenuAction(startEditing)}>Edit note</button> : null}
-          {isEditing ? <button onClick={() => runAsyncMenuAction(saveDraft)}>Save</button> : null}
-          {isEditing ? <button onClick={() => runMenuAction(requestExitEditMode)}>View mode</button> : null}
+          <button onClick={() => runAsyncMenuAction(saveDraft)}>Save</button>
           <button onClick={() => runAsyncMenuAction(toggleAlwaysOnTop)}>
             {note?.alwaysOnTop ? "Disable always on top" : "Always on top"}
           </button>
@@ -1032,15 +990,13 @@ function NoteWindow({ path }: { path: string }) {
           </button>
           <button onClick={() => runAsyncMenuAction(togglePin)}>{note?.pinned ? "Unpin" : "Pin"}</button>
           <button onClick={() => runAsyncMenuAction(() => openPathExternal(file?.path ?? path))}>Open in external editor</button>
-          {!isEditing ? <button onClick={() => runAsyncMenuAction(() => load())}>Refresh</button> : null}
-          {!isEditing ? <button onClick={() => runMenuAction(selectNoteBody)}>Select all</button> : null}
-          {!isEditing ? (
-            <button onClick={() => runAsyncMenuAction(copySelection)}>
-              <Copy size={14} />
-              Copy
-            </button>
-          ) : null}
-          <button onClick={() => runAsyncMenuAction(() => closeCurrentNote(file?.path ?? path))}>Close note</button>
+          <button onClick={() => runAsyncMenuAction(() => load())}>Refresh</button>
+          <button onClick={() => runMenuAction(selectNoteBody)}>Select all</button>
+          <button onClick={() => runAsyncMenuAction(copySelection)}>
+            <Copy size={14} />
+            Copy
+          </button>
+          <button onClick={() => runAsyncMenuAction(closeNote)}>Close note</button>
           <button onClick={() => setMenuOpen(false)}>
             <Check size={14} />
             Close menu
@@ -1058,22 +1014,6 @@ function NoteWindow({ path }: { path: string }) {
               </button>
               <button className="primary-button" onClick={applyExternalChange}>
                 Use external change
-              </button>
-            </footer>
-          </section>
-        </div>
-      ) : null}
-      {discardConfirmOpen ? (
-        <div className="modal-backdrop">
-          <section className="note-dialog">
-            <h2>Discard changes?</h2>
-            <p>Your unsaved Markdown edits will be lost.</p>
-            <footer>
-              <button className="secondary-button" onClick={() => setDiscardConfirmOpen(false)}>
-                Keep editing
-              </button>
-              <button className="primary-button" onClick={discardDraft}>
-                Discard
               </button>
             </footer>
           </section>

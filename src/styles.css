@@ -417,16 +417,6 @@ button {
   background: rgb(255 255 255 / 0.82);
 }
 
-.note-toolbar .note-view-mode-button {
-  border: 0;
-  background: #cfe8ff;
-  color: #174b7a;
-}
-
-.note-toolbar .note-view-mode-button:hover {
-  background: #b7dcff;
-}
-
 .note-banner {
   position: absolute;
   top: 34px;
@@ -463,18 +453,6 @@ button {
   font-size: 12px;
 }
 
-.note-content {
-  width: 100%;
-  height: 100%;
-  overflow: auto;
-  padding: calc(var(--note-padding) + 18px) var(--note-padding) 35vh;
-  color: var(--note-text);
-  font-size: var(--note-font-size);
-  line-height: var(--note-line-height);
-  scrollbar-width: none;
-  user-select: text;
-}
-
 .note-editor {
   width: 100%;
   height: 100%;
@@ -500,129 +478,6 @@ button {
 
 .note-editor::selection {
   background: rgb(53 97 171 / 0.22);
-}
-
-.note-shell.is-focused .note-content,
-.note-content:hover,
-.note-content:active {
-  scrollbar-width: thin;
-  scrollbar-color: rgb(92 80 37 / 0.35) transparent;
-}
-
-.note-content::-webkit-scrollbar {
-  width: 0;
-}
-
-.note-shell.is-focused .note-content::-webkit-scrollbar,
-.note-content:hover::-webkit-scrollbar,
-.note-content:active::-webkit-scrollbar {
-  width: 7px;
-}
-
-.note-content::-webkit-scrollbar-thumb {
-  border-radius: 999px;
-  background: rgb(92 80 37 / 0.35);
-}
-
-.note-content p,
-.note-content ul,
-.note-content ol,
-.note-content blockquote,
-.note-content pre,
-.note-content table {
-  margin: 0 0 calc(var(--note-line-height) * 1em);
-}
-
-.note-content p:has(+ ul),
-.note-content p:has(+ ol) {
-  margin-bottom: 0;
-}
-
-.note-content h1,
-.note-content h2,
-.note-content h3 {
-  margin: 0.85em 0 0.35em;
-  font-weight: 650;
-  line-height: 1.22;
-}
-
-.note-content h1 {
-  font-size: 1.18em;
-}
-
-.note-content h2 {
-  font-size: 1.1em;
-}
-
-.note-content h3 {
-  font-size: 1.02em;
-}
-
-.note-content ul,
-.note-content ol {
-  margin-left: 0;
-  padding-left: 1.55em;
-}
-
-.note-content li {
-  margin: 0.1em 0;
-  padding-left: 0.1em;
-}
-
-.note-content li:has(input[type="checkbox"]:checked) {
-  color: rgb(41 37 27 / 0.52);
-}
-
-.note-content input[type="checkbox"] {
-  width: 0.95em;
-  height: 0.95em;
-  margin-right: 0.35em;
-  vertical-align: -0.12em;
-}
-
-.note-content a {
-  color: #1c5fb8;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  cursor: default;
-}
-
-.note-content code {
-  border-radius: 4px;
-  padding: 0.05em 0.28em;
-  background: rgb(255 255 255 / 0.58);
-  font-family: "Cascadia Mono", Consolas, monospace;
-  font-size: 0.92em;
-}
-
-.note-content pre {
-  overflow: auto;
-  padding: 10px;
-  border-radius: 6px;
-  background: rgb(255 255 255 / 0.58);
-}
-
-.note-content table {
-  display: block;
-  max-width: 100%;
-  overflow: auto;
-  border-collapse: collapse;
-}
-
-.note-content th,
-.note-content td {
-  border: 1px solid rgb(92 80 37 / 0.25);
-  padding: 4px 6px;
-}
-
-.note-content blockquote {
-  border-left: 3px solid rgb(92 80 37 / 0.32);
-  padding-left: 10px;
-  color: rgb(41 37 27 / 0.75);
-}
-
-.empty-body {
-  color: rgb(41 37 27 / 0.45);
 }
 
 .resize-grip {
